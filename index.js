@@ -41,6 +41,13 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "LockForge API is running",
+  });
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'LockForge API is running' });
 });
