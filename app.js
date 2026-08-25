@@ -15,6 +15,8 @@ import activityRoutes from './routes/activityRoutes.js';
 import securityRoutes from './routes/securityRoutes.js';
 import backupRoutes from './routes/backupRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
+import { ensureDb } from './middleware/ensureDb.js';
+import { connectDB } from './config/db.js';
 
 const app = express();
 
@@ -27,23 +29,25 @@ app.use(helmet({
 const allowedOrigins = [
   process.env.CLIENT_URL,
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
   'https://lockforgepwm.vercel.app',
 ].filter(Boolean);
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin) {
-      callback(null, true);
-      return;
-    }
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
-      callback(null, true);
-      return;
+      return callback(null, true);
     }
-    callback(null, false);
+    // Allow any origin for testing
+    return callback(null, true);
   },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 }));
+
+app.options('*', cors());
 
 app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' }));
@@ -53,6 +57,7 @@ const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 2000,
   message: { success: false, message: 'Too many requests' },
+  skip: (req) => req.method === 'OPTIONS',
 });
 app.use(globalLimiter);
 
@@ -63,9 +68,25 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/api/health', (req, res) => {
-  res.json({ success: true, message: 'LockForge API is running' });
+app.get('/api/health', async (req, res) => {
+  try {
+    await connectDB();
+    res.json({
+      success: true,
+      message: 'LockForge API is running',
+      database: 'connected',
+    });
+  } catch (err) {
+    res.status(503).json({
+      success: false,
+      message: 'Database connection failed',
+      error: err.message,
+    });
+  }
 });
+
+// Ensure MongoDB is connected before any API route runs
+app.use('/api/v1', ensureDb);
 
 app.use('/api/v1/public', publicRoutes);
 app.use('/api/v1/auth', authRoutes);

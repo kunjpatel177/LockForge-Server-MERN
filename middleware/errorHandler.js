@@ -31,6 +31,20 @@ export const errorHandler = (err, req, res, next) => {
     statusCode = 401;
     message = 'Token expired';
   }
+  if (
+    err.name === 'MongooseServerSelectionError'
+    || err.name === 'MongoServerSelectionError'
+    || message.includes('buffering timed out')
+  ) {
+    statusCode = 503;
+    message = 'Database connection failed. Check MONGO_URI and MongoDB Atlas network access.';
+  }
+
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
 
   if (process.env.NODE_ENV !== 'production') {
     console.error(err);
