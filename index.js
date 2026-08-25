@@ -44,7 +44,7 @@ app.use(globalLimiter);
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
-    message: "LockForge API is running",
+    message: `LockForge API is running ${PORT}`,
   });
 });
 
