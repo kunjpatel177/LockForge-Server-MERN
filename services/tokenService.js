@@ -5,38 +5,73 @@ import { generateToken } from '../utils/crypto.js';
 const ACCESS_EXPIRY = '15m';
 const REFRESH_EXPIRY_DAYS = 7;
 
+export const getClientIp = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const ip = typeof forwarded === 'string' ? forwarded.split(',')[0] : forwarded[0];
+    return ip?.trim() || 'Unknown';
+  }
+  return req.ip || 'Unknown';
+};
+
 export const generateTokens = (userId, sessionId) => {
-  const accessToken = jwt.sign({ id: userId, sessionId }, process.env.JWT_SECRET, { expiresIn: ACCESS_EXPIRY });
-  const refreshToken = jwt.sign({ id: userId, sessionId }, process.env.JWT_REFRESH_SECRET, { expiresIn: `${REFRESH_EXPIRY_DAYS}d` });
+  const sid = String(sessionId);
+  const uid = String(userId);
+  const accessToken = jwt.sign({ id: uid, sessionId: sid }, process.env.JWT_SECRET, { expiresIn: ACCESS_EXPIRY });
+  const refreshToken = jwt.sign({ id: uid, sessionId: sid }, process.env.JWT_REFRESH_SECRET, { expiresIn: `${REFRESH_EXPIRY_DAYS}d` });
   return { accessToken, refreshToken };
 };
 
 export const createSession = async (userId, req) => {
-  const sessionId = generateToken(16);
-  const { refreshToken } = generateTokens(userId, sessionId);
   const expiresAt = new Date(Date.now() + REFRESH_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
   const userAgent = req.headers['user-agent'] || 'Unknown';
+
   const session = await Session.create({
     userId,
-    refreshToken,
+    refreshToken: generateToken(32),
     deviceInfo: parseDevice(userAgent),
     browser: parseBrowser(userAgent),
-    ipAddress: req.ip || req.headers['x-forwarded-for'] || 'Unknown',
+    ipAddress: getClientIp(req),
     expiresAt,
   });
-  return { session, refreshToken, sessionId: session._id };
+
+  const { accessToken, refreshToken } = generateTokens(userId, session._id);
+  session.refreshToken = refreshToken;
+  await session.save();
+
+  return { session, accessToken, refreshToken };
 };
 
 export const refreshAccessToken = async (refreshToken) => {
-  const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-  const session = await Session.findOne({ refreshToken, isActive: true, userId: decoded.id });
+  let decoded;
+  try {
+    decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+  } catch {
+    throw new Error('Invalid refresh token');
+  }
+
+  const session = await Session.findOne({
+    _id: String(decoded.sessionId),
+    refreshToken,
+    isActive: true,
+    userId: decoded.id,
+  });
+
   if (!session || session.expiresAt < new Date()) {
     throw new Error('Invalid session');
   }
+
   session.lastActive = new Date();
+  const tokens = generateTokens(decoded.id, session._id);
+  session.refreshToken = tokens.refreshToken;
   await session.save();
-  const accessToken = jwt.sign({ id: decoded.id, sessionId: session._id }, process.env.JWT_SECRET, { expiresIn: ACCESS_EXPIRY });
-  return { accessToken, userId: decoded.id, sessionId: session._id };
+
+  return {
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    userId: decoded.id,
+    sessionId: session._id,
+  };
 };
 
 const parseBrowser = (ua) => {

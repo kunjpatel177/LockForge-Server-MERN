@@ -46,7 +46,7 @@ export const errorHandler = (err, req, res, next) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
   }
 
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== 'production' && !(err.isOperational && err.statusCode === 401)) {
     console.error(err);
   }
 

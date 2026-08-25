@@ -7,7 +7,7 @@ import {
 import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/email.js';
 import { logActivity } from '../services/activityService.js';
 import { createDefaultFolders } from '../services/folderService.js';
-import { createSession, generateTokens, setTokenCookies, clearTokenCookies } from '../services/tokenService.js';
+import { createSession, refreshAccessToken, setTokenCookies, clearTokenCookies } from '../services/tokenService.js';
 import { unlockVault, clearVaultKey } from '../middleware/vaultLock.js';
 
 export const register = asyncHandler(async (req, res) => {
@@ -35,8 +35,7 @@ export const register = asyncHandler(async (req, res) => {
   await sendVerificationEmail(email, verificationToken);
   await logActivity(user._id, 'login', 'Account created', req);
 
-  const { session, refreshToken, sessionId } = await createSession(user._id, req);
-  const { accessToken } = generateTokens(user._id, sessionId);
+  const { accessToken, refreshToken } = await createSession(user._id, req);
   setTokenCookies(res, accessToken, refreshToken);
 
   res.status(201).json({
@@ -45,6 +44,7 @@ export const register = asyncHandler(async (req, res) => {
     data: {
       user: { id: user._id, name: user.name, email: user.email, emailVerified: user.emailVerified, settings: user.settings },
       accessToken,
+      refreshToken,
     },
   });
 });
@@ -57,8 +57,7 @@ export const login = asyncHandler(async (req, res) => {
     throw new AppError('Invalid email or password', 401);
   }
 
-  const { session, refreshToken, sessionId } = await createSession(user._id, req);
-  const { accessToken } = generateTokens(user._id, sessionId);
+  const { accessToken, refreshToken } = await createSession(user._id, req);
   setTokenCookies(res, accessToken, refreshToken);
   await logActivity(user._id, 'login', 'User logged in', req);
 
@@ -67,6 +66,7 @@ export const login = asyncHandler(async (req, res) => {
     data: {
       user: { id: user._id, name: user.name, email: user.email, emailVerified: user.emailVerified, settings: user.settings },
       accessToken,
+      refreshToken,
     },
   });
 });
@@ -84,17 +84,16 @@ export const logout = asyncHandler(async (req, res) => {
 });
 
 export const refreshToken = asyncHandler(async (req, res) => {
-  const token = req.cookies?.refreshToken;
+  const token = req.body?.refreshToken || req.cookies?.refreshToken;
   if (!token) throw new AppError('Refresh token not found', 401);
-  const jwt = await import('jsonwebtoken');
-  const decoded = jwt.default.verify(token, process.env.JWT_REFRESH_SECRET);
-  const session = await Session.findOne({ refreshToken: token, isActive: true });
-  if (!session || session.expiresAt < new Date()) throw new AppError('Invalid session', 401);
-  session.lastActive = new Date();
-  await session.save();
-  const accessToken = jwt.default.sign({ id: decoded.id, sessionId: session._id }, process.env.JWT_SECRET, { expiresIn: '15m' });
-  setTokenCookies(res, accessToken, token);
-  res.json({ success: true, data: { accessToken } });
+
+  try {
+    const { accessToken, refreshToken: newRefreshToken } = await refreshAccessToken(token);
+    setTokenCookies(res, accessToken, newRefreshToken);
+    res.json({ success: true, data: { accessToken, refreshToken: newRefreshToken } });
+  } catch {
+    throw new AppError('Invalid or expired refresh token', 401);
+  }
 });
 
 export const verifyEmail = asyncHandler(async (req, res) => {
