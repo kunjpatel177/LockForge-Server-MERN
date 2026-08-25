@@ -164,6 +164,18 @@ The React client (`../client`) proxies `/api` to this server during development.
 2. Start server: `npm run dev` (port 5000)
 3. Start client: `cd ../client && npm run dev` (port 5173)
 
+## Vercel Deployment
+
+Deploy the `server/` folder as a separate Vercel project.
+
+Required environment variables on Vercel:
+- `MONGO_URI`
+- `JWT_SECRET`, `JWT_REFRESH_SECRET`
+- `CLIENT_URL` (e.g. `https://lockforgepwm.vercel.app`)
+- Email variables (if using verification/reset)
+
+The server uses `api/index.js` as a serverless handler. All routes are available at `/api/v1/*`.
+
 ## Related
 
 - [Client README](../client/README.md)
