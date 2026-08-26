@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getProfile, updateProfile, changePassword, changeMasterPassword, deleteAccount,
+  requestEmailChange, cancelEmailChange,
 } from '../controllers/userController.js';
 import {
   getTwoFactorStatus, setupTwoFactor, enableTwoFactor,
@@ -11,6 +12,7 @@ import { protect } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import {
   changePasswordValidation, changeMasterPasswordValidation, deleteAccountValidation, profileValidation,
+  changeEmailValidation,
   twoFactorEnableValidation, twoFactorSetupValidation,
   twoFactorDisableRequestValidation, twoFactorDisableValidation,
   twoFactorAddSetupValidation, twoFactorAddMethodValidation, twoFactorRemoveMethodValidation, twoFactorRemoveRequestValidation,
@@ -22,6 +24,8 @@ router.use(protect);
 router.get('/profile', getProfile);
 router.put('/profile', profileValidation, validate, updateProfile);
 router.put('/change-password', changePasswordValidation, validate, changePassword);
+router.post('/change-email', changeEmailValidation, validate, requestEmailChange);
+router.delete('/change-email', cancelEmailChange);
 router.put('/change-master-password', changeMasterPasswordValidation, validate, changeMasterPassword);
 router.delete('/account', deleteAccountValidation, validate, deleteAccount);
 router.get('/2fa/status', getTwoFactorStatus);

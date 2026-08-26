@@ -93,6 +93,15 @@ export const deleteAccountValidation = [
   body('password').notEmpty().withMessage('Password is required'),
 ];
 
+export const changeEmailValidation = [
+  body('newEmail').isEmail().withMessage('Valid email is required').normalizeEmail(),
+  body('password').notEmpty().withMessage('Password is required'),
+];
+
+export const verifyEmailChangeValidation = [
+  body('token').notEmpty().withMessage('Token is required'),
+];
+
 export const twoFactorTokenValidation = [
   body('token').trim().notEmpty().withMessage('Authentication code is required')
     .isLength({ min: 6, max: 6 }).withMessage('Code must be 6 digits')

@@ -247,6 +247,39 @@ export const resendVerification = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Verification email sent' });
 });
 
+export const verifyEmailChange = asyncHandler(async (req, res) => {
+  const { token } = req.body;
+  const user = await User.findOne({
+    emailChangeToken: token,
+    emailChangeTokenExpiry: { $gt: new Date() },
+    pendingEmail: { $exists: true, $ne: null },
+  });
+  if (!user) throw new AppError('Invalid or expired email change link', 400);
+
+  const newEmail = user.pendingEmail;
+  const duplicate = await User.findOne({ email: newEmail, _id: { $ne: user._id } });
+  if (duplicate) {
+    user.pendingEmail = undefined;
+    user.emailChangeToken = undefined;
+    user.emailChangeTokenExpiry = undefined;
+    await user.save();
+    throw new AppError('Email is no longer available', 409);
+  }
+
+  const oldEmail = user.email;
+  user.email = newEmail;
+  user.emailVerified = true;
+  user.pendingEmail = undefined;
+  user.emailChangeToken = undefined;
+  user.emailChangeTokenExpiry = undefined;
+  user.verificationToken = undefined;
+  user.verificationTokenExpiry = undefined;
+  await user.save();
+
+  await logActivity(user._id, 'email_changed', `Email changed from ${oldEmail} to ${newEmail}`, req);
+  res.json({ success: true, message: 'Email changed successfully', data: { email: newEmail } });
+});
+
 export const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
   const user = await User.findOne({ email });

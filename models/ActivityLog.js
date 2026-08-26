@@ -29,6 +29,7 @@ const activityLogSchema = new mongoose.Schema(
         'folder_deleted',
         'trash_emptied',
         'settings_updated',
+        'email_changed',
       ],
     },
     description: { type: String, default: '' },

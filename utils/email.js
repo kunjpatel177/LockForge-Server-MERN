@@ -42,6 +42,23 @@ export const sendVerificationEmail = async (email, token) => {
   });
 };
 
+export const sendEmailChangeVerification = async (email, token) => {
+  const url = `${process.env.CLIENT_URL}/verify-email-change?token=${token}`;
+  await sendEmail({
+    to: email,
+    subject: 'Confirm your new LockForge email',
+    html: `<p>You requested to change your LockForge account email to this address.</p><p><a href="${url}">Click here to confirm your new email</a></p><p>Or copy this link: ${url}</p><p>This link expires in 24 hours. If you did not request this, you can ignore this email.</p>`,
+  });
+};
+
+export const sendEmailChangeAlert = async (oldEmail, newEmail) => {
+  await sendEmail({
+    to: oldEmail,
+    subject: 'LockForge email change requested',
+    html: `<p>A request was made to change your LockForge account email to <strong>${newEmail}</strong>.</p><p>If you did not make this request, sign in and change your password immediately.</p>`,
+  });
+};
+
 export const sendPasswordResetEmail = async (email, token) => {
   const url = `${process.env.CLIENT_URL}/reset-password?token=${token}`;
   await sendEmail({

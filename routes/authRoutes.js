@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import {
-  register, login, logout, refreshToken, verifyEmail, resendVerification,
+  register, login, logout, refreshToken, verifyEmail, resendVerification, verifyEmailChange,
   forgotPassword, resetPassword, unlockVaultHandler, lockVault, vaultStatus,
   verifyTwoFactorLogin, resendTwoFactorLogin,
 } from '../controllers/authController.js';
@@ -10,7 +10,7 @@ import { validate } from '../middleware/validate.js';
 import {
   registerValidation, loginValidation, forgotPasswordValidation,
   resetPasswordValidation, unlockVaultValidation, verifyTwoFactorLoginValidation,
-  resendTwoFactorLoginValidation,
+  resendTwoFactorLoginValidation, verifyEmailChangeValidation,
 } from '../validators/index.js';
 
 const router = Router();
@@ -25,6 +25,7 @@ router.post('/resend-2fa', loginLimiter, resendTwoFactorLoginValidation, validat
 router.post('/logout', optionalProtect, logout);
 router.post('/refresh', refreshToken);
 router.post('/verify-email', authLimiter, verifyEmail);
+router.post('/verify-email-change', authLimiter, verifyEmailChangeValidation, validate, verifyEmailChange);
 router.post('/resend-verification', protect, resendVerification);
 router.post('/forgot-password', authLimiter, forgotPasswordValidation, validate, forgotPassword);
 router.post('/reset-password', authLimiter, resetPasswordValidation, validate, resetPassword);
