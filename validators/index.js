@@ -92,3 +92,83 @@ export const profileValidation = [
 export const deleteAccountValidation = [
   body('password').notEmpty().withMessage('Password is required'),
 ];
+
+export const twoFactorTokenValidation = [
+  body('token').trim().notEmpty().withMessage('Authentication code is required')
+    .isLength({ min: 6, max: 6 }).withMessage('Code must be 6 digits')
+    .isNumeric().withMessage('Code must be numeric'),
+];
+
+const twoFactorMethodsValidation = [
+  body('methods')
+    .isArray({ min: 1, max: 2 })
+    .withMessage('Select at least one verification method'),
+  body('methods.*')
+    .isIn(['totp', 'email'])
+    .withMessage('Each method must be totp or email'),
+];
+
+const optionalSixDigitCode = (field) => body(field)
+  .optional({ values: 'falsy' })
+  .trim()
+  .isLength({ min: 6, max: 6 })
+  .withMessage('Code must be 6 digits')
+  .isNumeric()
+  .withMessage('Code must be numeric');
+
+export const twoFactorEnableValidation = [
+  body('password').notEmpty().withMessage('Password is required'),
+  ...twoFactorMethodsValidation,
+  optionalSixDigitCode('totpToken'),
+  optionalSixDigitCode('emailToken'),
+];
+
+export const twoFactorSetupValidation = [
+  body('password').notEmpty().withMessage('Password is required'),
+  ...twoFactorMethodsValidation,
+];
+
+export const twoFactorDisableRequestValidation = [
+  body('password').notEmpty().withMessage('Password is required'),
+];
+
+export const twoFactorDisableValidation = [
+  ...twoFactorTokenValidation,
+  body('password').notEmpty().withMessage('Password is required'),
+];
+
+export const twoFactorMethodValidation = [
+  body('method').isIn(['totp', 'email']).withMessage('Method must be totp or email'),
+];
+
+export const twoFactorAddSetupValidation = [
+  body('password').notEmpty().withMessage('Password is required'),
+  ...twoFactorMethodValidation,
+];
+
+export const twoFactorAddMethodValidation = [
+  body('password').notEmpty().withMessage('Password is required'),
+  ...twoFactorMethodValidation,
+  optionalSixDigitCode('totpToken'),
+  optionalSixDigitCode('emailToken'),
+];
+
+export const twoFactorRemoveMethodValidation = [
+  ...twoFactorTokenValidation,
+  body('password').notEmpty().withMessage('Password is required'),
+  ...twoFactorMethodValidation,
+];
+
+export const twoFactorRemoveRequestValidation = [
+  body('password').notEmpty().withMessage('Password is required'),
+  ...twoFactorMethodValidation,
+];
+
+export const verifyTwoFactorLoginValidation = [
+  body('twoFactorToken').notEmpty().withMessage('Verification token is required'),
+  ...twoFactorTokenValidation,
+];
+
+export const resendTwoFactorLoginValidation = [
+  body('twoFactorToken').notEmpty().withMessage('Verification token is required'),
+];

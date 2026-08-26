@@ -50,3 +50,25 @@ export const sendPasswordResetEmail = async (email, token) => {
     html: `<p>You requested a password reset.</p><p><a href="${url}">Click here to reset your password</a></p><p>This link expires in 1 hour.</p>`,
   });
 };
+
+export const sendTwoFactorOtpEmail = async (email, otp, purpose = 'login') => {
+  const titles = {
+    login: 'Your LockForge sign-in code',
+    setup: 'Verify two-factor authentication setup',
+    disable: 'Confirm disabling two-factor authentication',
+  };
+  const messages = {
+    login: 'Use this code to complete your sign-in:',
+    setup: 'Use this code to enable two-factor authentication on your account:',
+    disable: 'Use this code to disable two-factor authentication on your account:',
+  };
+  await sendEmail({
+    to: email,
+    subject: titles[purpose] || titles.login,
+    html: `
+      <p>${messages[purpose] || messages.login}</p>
+      <p style="font-size:28px;font-weight:bold;letter-spacing:4px;margin:16px 0;">${otp}</p>
+      <p>This code expires in 10 minutes. If you did not request this, you can ignore this email.</p>
+    `,
+  });
+};

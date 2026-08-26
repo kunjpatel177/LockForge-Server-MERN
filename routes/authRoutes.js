@@ -3,12 +3,14 @@ import rateLimit from 'express-rate-limit';
 import {
   register, login, logout, refreshToken, verifyEmail, resendVerification,
   forgotPassword, resetPassword, unlockVaultHandler, lockVault, vaultStatus,
+  verifyTwoFactorLogin, resendTwoFactorLogin,
 } from '../controllers/authController.js';
 import { protect, optionalProtect } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import {
   registerValidation, loginValidation, forgotPasswordValidation,
-  resetPasswordValidation, unlockVaultValidation,
+  resetPasswordValidation, unlockVaultValidation, verifyTwoFactorLoginValidation,
+  resendTwoFactorLoginValidation,
 } from '../validators/index.js';
 
 const router = Router();
@@ -18,6 +20,8 @@ const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { s
 
 router.post('/register', authLimiter, registerValidation, validate, register);
 router.post('/login', loginLimiter, loginValidation, validate, login);
+router.post('/verify-2fa', loginLimiter, verifyTwoFactorLoginValidation, validate, verifyTwoFactorLogin);
+router.post('/resend-2fa', loginLimiter, resendTwoFactorLoginValidation, validate, resendTwoFactorLogin);
 router.post('/logout', optionalProtect, logout);
 router.post('/refresh', refreshToken);
 router.post('/verify-email', authLimiter, verifyEmail);

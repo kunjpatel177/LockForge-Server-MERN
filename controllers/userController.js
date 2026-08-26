@@ -13,7 +13,9 @@ import { logActivity } from '../services/activityService.js';
 import { clearVaultKey, setVaultKey, clearVaultKeysForUser } from '../middleware/vaultLock.js';
 
 export const getProfile = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).select('-password -masterVerifier -masterSalt');
+  const user = await User.findById(req.user._id).select(
+    '-password -masterVerifier -masterSalt -twoFactorSecret -twoFactorTempSecret -twoFactorOtpHash -twoFactorOtpExpiry -twoFactorOtpPurpose',
+  );
   const [credentialCount, folderCount, noteCount, favoriteCount] = await Promise.all([
     Credential.countDocuments({ userId: req.user._id, isDeleted: false }),
     Folder.countDocuments({ userId: req.user._id }),

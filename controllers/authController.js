@@ -1,14 +1,34 @@
 import User from '../models/User.js';
 import Session from '../models/Session.js';
+import jwt from 'jsonwebtoken';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import {
   hashPassword, verifyPassword, generateSalt, createMasterVerifier, hashToken, generateToken,
 } from '../utils/crypto.js';
-import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/email.js';
+import { sendVerificationEmail, sendPasswordResetEmail, sendTwoFactorOtpEmail } from '../utils/email.js';
 import { logActivity } from '../services/activityService.js';
 import { createDefaultFolders } from '../services/folderService.js';
 import { createSession, refreshAccessToken, setTokenCookies, clearTokenCookies } from '../services/tokenService.js';
 import { unlockVault, clearVaultKey, getVaultKey } from '../middleware/vaultLock.js';
+import {
+  generateEmailOtp,
+  maskEmail,
+  storeUserOtp,
+  clearUserOtp,
+  verifyLoginCode,
+  getTwoFactorMethods,
+  hasTwoFactorMethod,
+} from '../utils/twoFactorService.js';
+
+const formatAuthUser = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  emailVerified: user.emailVerified,
+  settings: user.settings,
+  twoFactorEnabled: !!user.twoFactorEnabled,
+  twoFactorMethods: user.twoFactorEnabled ? getTwoFactorMethods(user) : [],
+});
 
 export const register = asyncHandler(async (req, res) => {
   const { name, email, password, masterPassword } = req.body;
@@ -42,7 +62,7 @@ export const register = asyncHandler(async (req, res) => {
     success: true,
     message: 'Registration successful. Please verify your email.',
     data: {
-      user: { id: user._id, name: user.name, email: user.email, emailVerified: user.emailVerified, settings: user.settings },
+      user: formatAuthUser(user),
       accessToken,
       refreshToken,
     },
@@ -57,6 +77,32 @@ export const login = asyncHandler(async (req, res) => {
     throw new AppError('Invalid email or password', 401);
   }
 
+  if (user.twoFactorEnabled) {
+    const methods = getTwoFactorMethods(user);
+    const twoFactorToken = jwt.sign(
+      { id: user._id.toString(), purpose: '2fa_login', methods },
+      process.env.JWT_SECRET,
+      { expiresIn: '10m' },
+    );
+
+    if (hasTwoFactorMethod(user, 'email')) {
+      const otp = generateEmailOtp();
+      storeUserOtp(user, otp, 'login');
+      await user.save();
+      await sendTwoFactorOtpEmail(user.email, otp, 'login');
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        requiresTwoFactor: true,
+        twoFactorToken,
+        twoFactorMethods: methods,
+        maskedEmail: hasTwoFactorMethod(user, 'email') ? maskEmail(user.email) : undefined,
+      },
+    });
+  }
+
   const { accessToken, refreshToken } = await createSession(user._id, req);
   setTokenCookies(res, accessToken, refreshToken);
   await logActivity(user._id, 'login', 'User logged in', req);
@@ -64,10 +110,79 @@ export const login = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     data: {
-      user: { id: user._id, name: user.name, email: user.email, emailVerified: user.emailVerified, settings: user.settings },
+      user: formatAuthUser(user),
       accessToken,
       refreshToken,
     },
+  });
+});
+
+export const verifyTwoFactorLogin = asyncHandler(async (req, res) => {
+  const { twoFactorToken, token } = req.body;
+  let decoded;
+  try {
+    decoded = jwt.verify(twoFactorToken, process.env.JWT_SECRET);
+  } catch {
+    throw new AppError('Verification expired. Please sign in again.', 401);
+  }
+  if (decoded.purpose !== '2fa_login') throw new AppError('Invalid verification token', 401);
+
+  const user = await User.findById(decoded.id);
+  if (!user || !user.twoFactorEnabled) throw new AppError('Invalid verification', 401);
+
+  if (!verifyLoginCode(user, token)) {
+    await logActivity(user._id, 'failed_login', 'Invalid 2FA code', req);
+    const methods = getTwoFactorMethods(user);
+    throw new AppError(
+      methods.includes('email') && methods.includes('totp')
+        ? 'Invalid or expired code. Use your email code or authenticator app.'
+        : 'Invalid or expired verification code',
+      401,
+    );
+  }
+
+  clearUserOtp(user);
+  await user.save();
+
+  const { accessToken, refreshToken } = await createSession(user._id, req);
+  setTokenCookies(res, accessToken, refreshToken);
+  await logActivity(user._id, 'login', 'User logged in with 2FA', req);
+
+  res.json({
+    success: true,
+    data: {
+      user: formatAuthUser(user),
+      accessToken,
+      refreshToken,
+    },
+  });
+});
+
+export const resendTwoFactorLogin = asyncHandler(async (req, res) => {
+  const { twoFactorToken } = req.body;
+  let decoded;
+  try {
+    decoded = jwt.verify(twoFactorToken, process.env.JWT_SECRET);
+  } catch {
+    throw new AppError('Verification expired. Please sign in again.', 401);
+  }
+  if (decoded.purpose !== '2fa_login') throw new AppError('Invalid verification token', 401);
+
+  const user = await User.findById(decoded.id);
+  if (!user || !user.twoFactorEnabled) throw new AppError('Invalid verification', 401);
+  if (!hasTwoFactorMethod(user, 'email')) {
+    throw new AppError('Resend is only available when email verification is enabled', 400);
+  }
+
+  const otp = generateEmailOtp();
+  storeUserOtp(user, otp, 'login');
+  await user.save();
+  await sendTwoFactorOtpEmail(user.email, otp, 'login');
+
+  res.json({
+    success: true,
+    message: 'A new verification code has been sent',
+    data: { maskedEmail: maskEmail(user.email) },
   });
 });
 
