@@ -41,19 +41,25 @@ export const register = asyncHandler(async (req, res) => {
   const verificationToken = generateToken();
   const verificationTokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-  const user = await User.create({
-    name,
-    email,
-    password: hashedPassword,
-    masterSalt,
-    masterVerifier,
-    verificationToken,
-    verificationTokenExpiry,
-  });
+  let user;
+  try {
+    user = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      masterSalt,
+      masterVerifier,
+      verificationToken,
+      verificationTokenExpiry,
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      throw new AppError('Email already registered', 409);
+    }
+    throw err;
+  }
 
   await createDefaultFolders(user._id);
-  await sendVerificationEmail(email, verificationToken);
-  await logActivity(user._id, 'login', 'Account created', req);
 
   const { accessToken, refreshToken } = await createSession(user._id, req);
   setTokenCookies(res, accessToken, refreshToken);
@@ -67,6 +73,11 @@ export const register = asyncHandler(async (req, res) => {
       refreshToken,
     },
   });
+
+  void sendVerificationEmail(email, verificationToken).catch((err) => {
+    console.error('Failed to send verification email:', err.message);
+  });
+  void logActivity(user._id, 'login', 'Account created', req);
 });
 
 export const login = asyncHandler(async (req, res) => {

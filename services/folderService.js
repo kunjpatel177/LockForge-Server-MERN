@@ -4,12 +4,21 @@ import { AppError } from '../middleware/errorHandler.js';
 const DEFAULT_FOLDERS = ['Personal', 'Work', 'Banking', 'Social', 'Development', 'Other'];
 
 export const createDefaultFolders = async (userId) => {
+  const existing = await Folder.countDocuments({ userId });
+  if (existing > 0) return;
+
   const folders = DEFAULT_FOLDERS.map((name) => ({
     userId,
     name,
     isDefault: true,
   }));
-  await Folder.insertMany(folders);
+
+  try {
+    await Folder.insertMany(folders, { ordered: false });
+  } catch (err) {
+    if (err.code === 11000) return;
+    throw err;
+  }
 };
 
 export const assertFolderOwnership = async (userId, folderId) => {

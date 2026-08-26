@@ -16,8 +16,10 @@ export const errorHandler = (err, req, res, next) => {
   }
   if (err.code === 11000) {
     statusCode = 409;
-    const field = Object.keys(err.keyPattern || {})[0] || 'field';
-    message = `${field} already exists`;
+    const keySource = err.keyPattern || err.keyValue || {};
+    const field = Object.keys(keySource)[0] || 'field';
+    const label = field === 'email' ? 'Email' : field.charAt(0).toUpperCase() + field.slice(1);
+    message = `${label} already exists`;
   }
   if (err.name === 'CastError') {
     statusCode = 400;
