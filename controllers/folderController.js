@@ -3,7 +3,8 @@ import Credential from '../models/Credential.js';
 import SecureNote from '../models/SecureNote.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import { logActivity } from '../services/activityService.js';
-
+import { LIMITS } from '../config/limits.js';
+import { assertBatchSize, assertUnderLimit } from '../utils/limitGuard.js';
 export const getFolders = asyncHandler(async (req, res) => {
   const folders = await Folder.find({ userId: req.user._id }).sort({ name: 1 });
   const [credCounts, noteCounts] = await Promise.all([
@@ -51,6 +52,8 @@ export const getFolder = asyncHandler(async (req, res) => {
 
 export const createFolder = asyncHandler(async (req, res) => {
   const { name } = req.body;
+  const folderCount = await Folder.countDocuments({ userId: req.user._id });
+  assertUnderLimit(folderCount, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
   const existing = await Folder.findOne({ userId: req.user._id, name });
   if (existing) throw new AppError('Folder already exists', 409);
   const folder = await Folder.create({ userId: req.user._id, name });
@@ -75,4 +78,44 @@ export const deleteFolder = asyncHandler(async (req, res) => {
   await folder.deleteOne();
   await logActivity(req.user._id, 'folder_deleted', `Deleted folder: ${folder.name}`, req);
   res.json({ success: true, message: 'Folder deleted' });
+});
+
+export const assignItemsToFolder = asyncHandler(async (req, res) => {
+  const { credentialIds = [], noteIds = [] } = req.body;
+  assertBatchSize(credentialIds.length, LIMITS.MAX_ASSIGN_BATCH_SIZE, 'credentials');
+  assertBatchSize(noteIds.length, LIMITS.MAX_ASSIGN_BATCH_SIZE, 'notes');
+  const folder = await Folder.findOne({ _id: req.params.id, userId: req.user._id });
+  if (!folder) throw new AppError('Folder not found', 404);
+
+  let credentialCount = 0;
+  let noteCount = 0;
+
+  if (credentialIds.length) {
+    const result = await Credential.updateMany(
+      { _id: { $in: credentialIds }, userId: req.user._id, isDeleted: false },
+      { folderId: folder._id },
+    );
+    credentialCount = result.modifiedCount;
+  }
+
+  if (noteIds.length) {
+    const result = await SecureNote.updateMany(
+      { _id: { $in: noteIds }, userId: req.user._id },
+      { folderId: folder._id },
+    );
+    noteCount = result.modifiedCount;
+  }
+
+  await logActivity(
+    req.user._id,
+    'folder_updated',
+    `Assigned ${credentialCount} credentials and ${noteCount} notes to folder: ${folder.name}`,
+    req,
+  );
+
+  res.json({
+    success: true,
+    message: 'Items assigned to folder',
+    data: { credentialCount, noteCount },
+  });
 });

@@ -41,6 +41,11 @@ export const errorHandler = (err, req, res, next) => {
   }
 
   const origin = req.headers.origin;
+  if (res.headersSent) {
+    if (process.env.NODE_ENV !== 'production') console.error(err);
+    return;
+  }
+
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');

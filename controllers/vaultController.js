@@ -3,6 +3,9 @@ import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import { encryptJSON, decryptJSON } from '../utils/crypto.js';
 import { logActivity } from '../services/activityService.js';
 import { requireVaultUnlock } from '../middleware/vaultLock.js';
+import { assertFolderOwnership } from '../services/folderService.js';
+import { LIMITS } from '../config/limits.js';
+import { assertUnderLimit } from '../utils/limitGuard.js';
 
 const decryptCredential = (cred, key) => {
   const data = decryptJSON(cred.encryptedData, key);
@@ -34,6 +37,7 @@ export const getCredentials = asyncHandler(async (req, res) => {
   const filter = { userId: req.user._id };
   filter.isDeleted = trash === 'true';
   if (folderId) filter.folderId = folderId;
+  if (req.query.unassigned === 'true') filter.folderId = null;
   if (favorite === 'true') filter.isFavorite = true;
 
   let query = Credential.find(filter);
@@ -63,6 +67,11 @@ export const createCredential = asyncHandler(async (req, res) => {
   const {
     serviceName, username, email, password, url, notes, folderId, tags, customFields, isFavorite,
   } = req.body;
+
+  if (folderId) await assertFolderOwnership(req.user._id, folderId);
+
+  const credentialCount = await Credential.countDocuments({ userId: req.user._id, isDeleted: false });
+  assertUnderLimit(credentialCount, LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
 
   const encryptedData = encryptJSON({
     username, email, password, url, notes, customFields: customFields || [],
@@ -96,7 +105,10 @@ export const updateCredential = asyncHandler(async (req, res) => {
   };
 
   if (req.body.serviceName) cred.serviceName = req.body.serviceName;
-  if (req.body.folderId !== undefined) cred.folderId = req.body.folderId || null;
+  if (req.body.folderId !== undefined) {
+    if (req.body.folderId) await assertFolderOwnership(req.user._id, req.body.folderId);
+    cred.folderId = req.body.folderId || null;
+  }
   if (req.body.tags) cred.tags = req.body.tags;
   if (req.body.isFavorite !== undefined) cred.isFavorite = req.body.isFavorite;
 
@@ -137,6 +149,22 @@ export const emptyTrash = asyncHandler(async (req, res) => {
   const result = await Credential.deleteMany({ userId: req.user._id, isDeleted: true });
   await logActivity(req.user._id, 'trash_emptied', `Emptied trash (${result.deletedCount} items)`, req);
   res.json({ success: true, message: `Permanently deleted ${result.deletedCount} credentials` });
+});
+
+export const moveCredentialToFolder = asyncHandler(async (req, res) => {
+  const cred = await Credential.findOne({ _id: req.params.id, userId: req.user._id, isDeleted: false });
+  if (!cred) throw new AppError('Credential not found', 404);
+
+  if (req.body.folderId) {
+    await assertFolderOwnership(req.user._id, req.body.folderId);
+    cred.folderId = req.body.folderId;
+  } else {
+    cred.folderId = null;
+  }
+
+  await cred.save();
+  await logActivity(req.user._id, 'credential_updated', `Moved credential to folder: ${cred.serviceName}`, req);
+  res.json({ success: true, data: decryptCredential(cred, req.vaultKey) });
 });
 
 export const toggleFavorite = asyncHandler(async (req, res) => {

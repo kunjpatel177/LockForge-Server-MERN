@@ -3,6 +3,8 @@ import Credential from '../models/Credential.js';
 import Folder from '../models/Folder.js';
 import SecureNote from '../models/SecureNote.js';
 import Session from '../models/Session.js';
+import ActivityLog from '../models/ActivityLog.js';
+import { clearTokenCookies } from '../services/tokenService.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import {
   hashPassword, verifyPassword, generateSalt, createMasterVerifier, deriveKey, encryptJSON, decryptJSON,
@@ -43,7 +45,7 @@ export const changePassword = asyncHandler(async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const user = await User.findById(req.user._id);
   if (!(await verifyPassword(user.password, currentPassword))) {
-    throw new AppError('Current password is incorrect', 401);
+    throw new AppError('Current password is incorrect', 400);
   }
   user.password = await hashPassword(newPassword);
   await user.save();
@@ -89,15 +91,17 @@ export const deleteAccount = asyncHandler(async (req, res) => {
   const { password } = req.body;
   const user = await User.findById(req.user._id);
   if (!(await verifyPassword(user.password, password))) {
-    throw new AppError('Password is incorrect', 401);
+    throw new AppError('Password is incorrect', 400);
   }
   await Promise.all([
     Credential.deleteMany({ userId: user._id }),
     Folder.deleteMany({ userId: user._id }),
     SecureNote.deleteMany({ userId: user._id }),
     Session.deleteMany({ userId: user._id }),
+    ActivityLog.deleteMany({ userId: user._id }),
   ]);
   await user.deleteOne();
   clearVaultKey(user._id);
+  clearTokenCookies(res);
   res.json({ success: true, message: 'Account deleted' });
 });

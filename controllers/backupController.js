@@ -1,4 +1,3 @@
-import PDFDocument from 'pdfkit';
 import Credential from '../models/Credential.js';
 import Folder from '../models/Folder.js';
 import SecureNote from '../models/SecureNote.js';
@@ -7,6 +6,9 @@ import { encryptJSON, decryptJSON, verifyMasterPassword } from '../utils/crypto.
 import User from '../models/User.js';
 import { deriveKey } from '../utils/crypto.js';
 import { logActivity } from '../services/activityService.js';
+import { LIMITS } from '../config/limits.js';
+import { assertUnderLimit } from '../utils/limitGuard.js';
+import { buildVaultPdf } from '../utils/pdfExport.js';
 
 export const exportBackup = asyncHandler(async (req, res) => {
   const { masterPassword } = req.body;
@@ -85,14 +87,35 @@ export const importBackup = asyncHandler(async (req, res) => {
   const existingFolders = await Folder.find({ userId: req.user._id });
   existingFolders.forEach((f) => { folderMap[f.name] = f._id; });
 
+  const newFolders = (backupData.folders || []).filter((f) => !folderMap[f.name]);
+  const [currentFolderCount, currentCredCount, currentNoteCount] = await Promise.all([
+    Folder.countDocuments({ userId: req.user._id }),
+    Credential.countDocuments({ userId: req.user._id, isDeleted: false }),
+    SecureNote.countDocuments({ userId: req.user._id }),
+  ]);
+
+  if (!replace) {
+    assertUnderLimit(currentFolderCount + newFolders.length, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
+    assertUnderLimit(currentCredCount + (backupData.credentials?.length || 0), LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
+    assertUnderLimit(currentNoteCount + (backupData.notes?.length || 0), LIMITS.MAX_NOTES_PER_USER, 'notes');
+  } else {
+    assertUnderLimit(newFolders.length, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
+    assertUnderLimit(backupData.credentials?.length || 0, LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
+    assertUnderLimit(backupData.notes?.length || 0, LIMITS.MAX_NOTES_PER_USER, 'notes');
+  }
+
   for (const f of backupData.folders || []) {
     if (!folderMap[f.name]) {
+      const folderCount = await Folder.countDocuments({ userId: req.user._id });
+      assertUnderLimit(folderCount, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
       const folder = await Folder.create({ userId: req.user._id, name: f.name, isDefault: f.isDefault });
       folderMap[f.name] = folder._id;
     }
   }
 
   for (const c of backupData.credentials || []) {
+    const credentialCount = await Credential.countDocuments({ userId: req.user._id, isDeleted: false });
+    assertUnderLimit(credentialCount, LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
     await Credential.create({
       userId: req.user._id,
       serviceName: c.serviceName,
@@ -105,6 +128,8 @@ export const importBackup = asyncHandler(async (req, res) => {
   }
 
   for (const n of backupData.notes || []) {
+    const noteCount = await SecureNote.countDocuments({ userId: req.user._id });
+    assertUnderLimit(noteCount, LIMITS.MAX_NOTES_PER_USER, 'notes');
     await SecureNote.create({
       userId: req.user._id,
       encryptedData: encryptJSON(n.data, key),
@@ -125,41 +150,74 @@ export const exportPDF = asyncHandler(async (req, res) => {
   }
   const key = deriveKey(masterPassword, user.masterSalt);
 
-  const credentials = await Credential.find({ userId: req.user._id, isDeleted: false });
-  const folders = await Folder.find({ userId: req.user._id });
-  const folderMap = Object.fromEntries(folders.map((f) => [f._id.toString(), f.name]));
+  const [credentials, notes, folders] = await Promise.all([
+    Credential.find({ userId: req.user._id, isDeleted: false }).sort({ serviceName: 1 }),
+    SecureNote.find({ userId: req.user._id }).sort({ updatedAt: -1 }),
+    Folder.find({ userId: req.user._id }).sort({ name: 1 }),
+  ]);
 
-  const doc = new PDFDocument({ margin: 50 });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', 'attachment; filename=lockforge-export.pdf');
-  doc.pipe(res);
+  const folderGroups = folders.map((folder) => ({
+    id: folder._id.toString(),
+    name: folder.name,
+    credentials: [],
+    notes: [],
+  }));
+  const unassigned = { name: 'Unassigned', credentials: [], notes: [] };
 
-  doc.fontSize(20).text('LockForge Vault Export', { align: 'center' });
-  doc.moveDown();
-  doc.fontSize(10).fillColor('red').text('WARNING: This document contains decrypted credentials. Store securely and delete after use.', { align: 'center' });
-  doc.moveDown();
-  doc.fillColor('black').fontSize(10).text(`Exported: ${new Date().toLocaleString()}`);
-  doc.text(`User: ${user.email}`);
-  doc.moveDown();
-
-  credentials.forEach((cred, i) => {
+  credentials.forEach((cred) => {
     const data = decryptJSON(cred.encryptedData, key);
-    if (i > 0) doc.moveDown();
-    doc.fontSize(14).text(cred.serviceName, { underline: true });
-    doc.fontSize(10);
-    if (data.username) doc.text(`Username: ${data.username}`);
-    if (data.email) doc.text(`Email: ${data.email}`);
-    if (data.password) doc.text(`Password: ${data.password}`);
-    if (data.url) doc.text(`URL: ${data.url}`);
-    if (cred.folderId) doc.text(`Folder: ${folderMap[cred.folderId.toString()] || 'Unknown'}`);
-    if (data.notes) doc.text(`Notes: ${data.notes}`);
-    if (data.customFields?.length) {
-      data.customFields.forEach((cf) => doc.text(`${cf.label}: ${cf.value}`));
+    const item = {
+      serviceName: cred.serviceName,
+      username: data.username || '',
+      email: data.email || '',
+      password: data.password || '',
+      url: data.url || '',
+      notes: data.notes || '',
+      customFields: data.customFields || [],
+      updatedAt: cred.updatedAt,
+    };
+    if (cred.folderId) {
+      const group = folderGroups.find((g) => g.id === cred.folderId.toString());
+      if (group) group.credentials.push(item);
+      else unassigned.credentials.push(item);
+    } else {
+      unassigned.credentials.push(item);
     }
-    doc.moveDown(0.5);
-    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke();
   });
 
+  notes.forEach((note) => {
+    const data = decryptJSON(note.encryptedData, key);
+    const item = {
+      title: data.title || 'Untitled Note',
+      content: data.content || '',
+      updatedAt: note.updatedAt,
+    };
+    if (note.folderId) {
+      const group = folderGroups.find((g) => g.id === note.folderId.toString());
+      if (group) group.notes.push(item);
+      else unassigned.notes.push(item);
+    } else {
+      unassigned.notes.push(item);
+    }
+  });
+
+  const populatedSections = [
+    ...folderGroups.filter((s) => s.credentials.length || s.notes.length),
+    ...(unassigned.credentials.length || unassigned.notes.length ? [unassigned] : []),
+  ];
+
   await logActivity(req.user._id, 'export', 'PDF export generated', req);
-  doc.end();
+
+  const pdfBuffer = await buildVaultPdf({
+    user,
+    folders,
+    credentials,
+    notes,
+    populatedSections,
+  });
+
+  const filename = `lockforge-export-${new Date().toISOString().split('T')[0]}.pdf`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+  res.send(pdfBuffer);
 });

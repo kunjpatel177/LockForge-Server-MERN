@@ -2,12 +2,12 @@ import { Router } from 'express';
 import {
   getCredentials, getCredential, createCredential, updateCredential,
   deleteCredential, restoreCredential, permanentDeleteCredential,
-  emptyTrash, toggleFavorite,
+  emptyTrash, toggleFavorite, moveCredentialToFolder,
 } from '../controllers/vaultController.js';
 import { protect } from '../middleware/auth.js';
 import { requireVaultUnlock } from '../middleware/vaultLock.js';
 import { validate } from '../middleware/validate.js';
-import { credentialValidation } from '../validators/index.js';
+import { credentialValidation, moveFolderValidation } from '../validators/index.js';
 
 const router = Router();
 
@@ -27,5 +27,6 @@ router.delete('/:id', deleteCredential);
 router.post('/:id/restore', restoreCredential);
 router.delete('/:id/permanent', permanentDeleteCredential);
 router.patch('/:id/favorite', toggleFavorite);
+router.patch('/:id/folder', moveFolderValidation, validate, moveCredentialToFolder);
 
 export default router;

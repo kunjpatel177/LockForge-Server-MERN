@@ -1,4 +1,5 @@
 import { body } from 'express-validator';
+import { LIMITS } from '../config/limits.js';
 
 const strongPassword = (field, label = 'Password') =>
   body(field)
@@ -9,7 +10,8 @@ const strongPassword = (field, label = 'Password') =>
     .matches(/[^a-zA-Z0-9]/).withMessage(`${label} must contain a special character`);
 
 export const registerValidation = [
-  body('name').trim().notEmpty().withMessage('Name is required'),
+  body('name').trim().notEmpty().withMessage('Name is required')
+    .isLength({ max: LIMITS.MAX_USER_NAME_LENGTH }).withMessage(`Name must be at most ${LIMITS.MAX_USER_NAME_LENGTH} characters`),
   body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
   strongPassword('password'),
   strongPassword('masterPassword', 'Master password'),
@@ -44,29 +46,49 @@ export const unlockVaultValidation = [
 ];
 
 export const credentialValidation = [
-  body('serviceName').trim().notEmpty().withMessage('Service name is required'),
-  body('username').optional().trim(),
-  body('email').optional().trim(),
-  body('password').optional(),
-  body('url').optional().trim(),
-  body('notes').optional().trim(),
+  body('serviceName').trim().notEmpty().withMessage('Service name is required')
+    .isLength({ max: LIMITS.MAX_SERVICE_NAME_LENGTH }).withMessage(`Service name must be at most ${LIMITS.MAX_SERVICE_NAME_LENGTH} characters`),
+  body('username').optional().trim().isLength({ max: LIMITS.MAX_CREDENTIAL_FIELD_LENGTH }),
+  body('email').optional().trim().isLength({ max: LIMITS.MAX_CREDENTIAL_FIELD_LENGTH }),
+  body('password').optional().isLength({ max: LIMITS.MAX_CREDENTIAL_FIELD_LENGTH }),
+  body('url').optional().trim().isLength({ max: LIMITS.MAX_CREDENTIAL_FIELD_LENGTH }),
+  body('notes').optional().trim().isLength({ max: LIMITS.MAX_CREDENTIAL_NOTES_LENGTH }),
   body('folderId').optional(),
-  body('tags').optional().isArray(),
-  body('customFields').optional().isArray(),
+  body('tags').optional().isArray({ max: LIMITS.MAX_TAGS_PER_CREDENTIAL }),
+  body('tags.*').optional().trim().isLength({ max: LIMITS.MAX_TAG_LENGTH }),
+  body('customFields').optional().isArray({ max: LIMITS.MAX_CUSTOM_FIELDS }),
+  body('customFields.*.label').optional().trim().isLength({ max: LIMITS.MAX_CUSTOM_FIELD_LABEL_LENGTH }),
+  body('customFields.*.value').optional().isLength({ max: LIMITS.MAX_CUSTOM_FIELD_VALUE_LENGTH }),
 ];
 
 export const folderValidation = [
-  body('name').trim().notEmpty().withMessage('Folder name is required'),
+  body('name').trim().notEmpty().withMessage('Folder name is required')
+    .isLength({ max: LIMITS.MAX_FOLDER_NAME_LENGTH }).withMessage(`Folder name must be at most ${LIMITS.MAX_FOLDER_NAME_LENGTH} characters`),
+];
+
+export const assignItemsValidation = [
+  body('credentialIds').optional().isArray({ max: LIMITS.MAX_ASSIGN_BATCH_SIZE }),
+  body('noteIds').optional().isArray({ max: LIMITS.MAX_ASSIGN_BATCH_SIZE }),
+];
+
+export const moveFolderValidation = [
+  body('folderId').optional({ nullable: true }),
 ];
 
 export const noteValidation = [
-  body('title').trim().notEmpty().withMessage('Title is required'),
-  body('content').optional(),
+  body('title').trim().notEmpty().withMessage('Title is required')
+    .isLength({ max: LIMITS.MAX_NOTE_TITLE_LENGTH }).withMessage(`Title must be at most ${LIMITS.MAX_NOTE_TITLE_LENGTH} characters`),
+  body('content').optional().isLength({ max: LIMITS.MAX_NOTE_CONTENT_LENGTH }),
   body('folderId').optional(),
 ];
 
 export const profileValidation = [
-  body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
+  body('name').optional().trim().notEmpty().withMessage('Name cannot be empty')
+    .isLength({ max: LIMITS.MAX_USER_NAME_LENGTH }),
   body('settings.theme').optional().isIn(['light', 'dark']),
   body('settings.autoLockMinutes').optional().isInt({ min: 1, max: 120 }),
+];
+
+export const deleteAccountValidation = [
+  body('password').notEmpty().withMessage('Password is required'),
 ];
