@@ -9,6 +9,12 @@ const sessionSchema = new mongoose.Schema(
     ipAddress: { type: String, default: 'Unknown' },
     isActive: { type: Boolean, default: true },
     lastActive: { type: Date, default: Date.now },
+    vaultKeyEncrypted: {
+      ciphertext: String,
+      iv: String,
+      authTag: String,
+    },
+    vaultUnlockedUntil: Date,
     expiresAt: { type: Date, required: true },
   },
   { timestamps: true }

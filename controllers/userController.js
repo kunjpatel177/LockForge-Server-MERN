@@ -10,7 +10,7 @@ import {
   hashPassword, verifyPassword, generateSalt, createMasterVerifier, deriveKey, encryptJSON, decryptJSON,
 } from '../utils/crypto.js';
 import { logActivity } from '../services/activityService.js';
-import { clearVaultKey, setVaultKey } from '../middleware/vaultLock.js';
+import { clearVaultKey, setVaultKey, clearVaultKeysForUser } from '../middleware/vaultLock.js';
 
 export const getProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id).select('-password -masterVerifier -masterSalt');
@@ -82,7 +82,7 @@ export const changeMasterPassword = asyncHandler(async (req, res) => {
   user.masterSalt = newSalt;
   user.masterVerifier = createMasterVerifier(newMasterPassword, newSalt);
   await user.save();
-  setVaultKey(user._id, newKey, user.settings?.autoLockMinutes || 60);
+  await setVaultKey(req.sessionId, newKey, user.settings?.autoLockMinutes || 60);
   await logActivity(user._id, 'master_password_changed', 'Master password changed', req);
   res.json({ success: true, message: 'Master password changed and vault re-encrypted' });
 });
@@ -101,7 +101,7 @@ export const deleteAccount = asyncHandler(async (req, res) => {
     ActivityLog.deleteMany({ userId: user._id }),
   ]);
   await user.deleteOne();
-  clearVaultKey(user._id);
+  await clearVaultKeysForUser(user._id);
   clearTokenCookies(res);
   res.json({ success: true, message: 'Account deleted' });
 });

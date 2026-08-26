@@ -8,7 +8,7 @@ import { sendVerificationEmail, sendPasswordResetEmail } from '../utils/email.js
 import { logActivity } from '../services/activityService.js';
 import { createDefaultFolders } from '../services/folderService.js';
 import { createSession, refreshAccessToken, setTokenCookies, clearTokenCookies } from '../services/tokenService.js';
-import { unlockVault, clearVaultKey } from '../middleware/vaultLock.js';
+import { unlockVault, clearVaultKey, getVaultKey } from '../middleware/vaultLock.js';
 
 export const register = asyncHandler(async (req, res) => {
   const { name, email, password, masterPassword } = req.body;
@@ -76,7 +76,7 @@ export const logout = asyncHandler(async (req, res) => {
     await Session.findByIdAndUpdate(req.sessionId, { isActive: false });
   }
   if (req.user) {
-    clearVaultKey(req.user._id);
+    await clearVaultKey(req.sessionId);
     await logActivity(req.user._id, 'logout', 'User logged out', req);
   }
   clearTokenCookies(res);
@@ -153,16 +153,16 @@ export const resetPassword = asyncHandler(async (req, res) => {
 
 export const unlockVaultHandler = asyncHandler(async (req, res) => {
   const { masterPassword } = req.body;
-  await unlockVault(req.user._id, masterPassword);
+  await unlockVault(req.user._id, req.sessionId, masterPassword);
   res.json({ success: true, message: 'Vault unlocked' });
 });
 
 export const lockVault = asyncHandler(async (req, res) => {
-  clearVaultKey(req.user._id);
+  await clearVaultKey(req.sessionId);
   res.json({ success: true, message: 'Vault locked' });
 });
 
 export const vaultStatus = asyncHandler(async (req, res) => {
-  const { getVaultKey } = await import('../middleware/vaultLock.js');
-  res.json({ success: true, data: { unlocked: !!getVaultKey(req.user._id) } });
+  const key = await getVaultKey(req.sessionId);
+  res.json({ success: true, data: { unlocked: !!key } });
 });
