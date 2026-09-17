@@ -85,6 +85,13 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+app.get('/api', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'LockForge API is running. Use /api/v1 routes.',
+  });
+});
+
 // Ensure MongoDB is connected before any API route runs
 app.use('/api/v1', ensureDb);
 
