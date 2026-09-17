@@ -7,17 +7,17 @@ export const getSessions = asyncHandler(async (req, res) => {
   const sessions = await Session.find({ userId: req.user._id, isActive: true })
     .sort({ lastActive: -1 })
     .select('-refreshToken');
-  const data = sessions.map((s) => ({
+  const data = await Promise.all(sessions.map(async (s) => ({
     id: s._id,
     deviceInfo: s.deviceInfo,
     browser: s.browser,
     ipAddress: s.ipAddress,
-    location: resolveSessionLocation(s),
+    location: await resolveSessionLocation(s),
     lastActive: s.lastActive,
     createdAt: s.createdAt,
     isCurrent: s._id.toString() === req.sessionId?.toString(),
     expiresAt: s.expiresAt,
-  }));
+  })));
   res.json({ success: true, data });
 });
 

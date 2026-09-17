@@ -23,7 +23,7 @@ const pruneActivityLogs = async (userId) => {
 export const logActivity = async (userId, action, description = '', req = null, metadata = {}) => {
   try {
     const ipAddress = req ? getClientIp(req) : 'Unknown';
-    const location = resolveLocationFromIp(ipAddress);
+    const location = await resolveLocationFromIp(ipAddress);
 
     await ActivityLog.create({
       userId,

@@ -35,7 +35,7 @@ export const createSession = async (userId, req) => {
     deviceInfo: parseDevice(userAgent),
     browser: parseBrowser(userAgent),
     ipAddress,
-    location: resolveLocationFromIp(ipAddress),
+    location: await resolveLocationFromIp(ipAddress),
     expiresAt,
   });
 

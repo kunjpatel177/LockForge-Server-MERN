@@ -14,7 +14,7 @@ export const getActivityLogs = asyncHandler(async (req, res) => {
   ]);
   res.json({
     success: true,
-    data: logs.map(enrichActivityLog),
+    data: await Promise.all(logs.map(enrichActivityLog)),
     pagination: { page: parseInt(page, 10), limit: parseInt(limit, 10), total },
   });
 });
@@ -23,5 +23,5 @@ export const getRecentActivity = asyncHandler(async (req, res) => {
   const logs = await ActivityLog.find({ userId: req.user._id })
     .sort({ createdAt: -1 })
     .limit(10);
-  res.json({ success: true, data: logs.map(enrichActivityLog) });
+  res.json({ success: true, data: await Promise.all(logs.map(enrichActivityLog)) });
 });
