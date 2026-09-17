@@ -1,5 +1,6 @@
 import ActivityLog from '../models/ActivityLog.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { enrichActivityLog } from '../utils/ipLocation.js';
 
 export const getActivityLogs = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20 } = req.query;
@@ -13,7 +14,7 @@ export const getActivityLogs = asyncHandler(async (req, res) => {
   ]);
   res.json({
     success: true,
-    data: logs,
+    data: logs.map(enrichActivityLog),
     pagination: { page: parseInt(page, 10), limit: parseInt(limit, 10), total },
   });
 });
@@ -22,5 +23,5 @@ export const getRecentActivity = asyncHandler(async (req, res) => {
   const logs = await ActivityLog.find({ userId: req.user._id })
     .sort({ createdAt: -1 })
     .limit(10);
-  res.json({ success: true, data: logs });
+  res.json({ success: true, data: logs.map(enrichActivityLog) });
 });

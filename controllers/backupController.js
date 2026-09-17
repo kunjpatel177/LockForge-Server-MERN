@@ -10,6 +10,55 @@ import { LIMITS } from '../config/limits.js';
 import { assertUnderLimit } from '../utils/limitGuard.js';
 import { buildVaultPdf } from '../utils/pdfExport.js';
 
+const buildFolderLookup = (folders) => {
+  const byId = new Map();
+  folders.forEach((folder) => {
+    byId.set(folder._id.toString(), folder);
+  });
+  return byId;
+};
+
+const resolveImportFolderId = (entry, folderIdByBackupId, folderIdByName) => {
+  if (entry.folderName && folderIdByName[entry.folderName]) {
+    return folderIdByName[entry.folderName];
+  }
+  if (entry.folderId && folderIdByBackupId[entry.folderId]) {
+    return folderIdByBackupId[entry.folderId];
+  }
+  return null;
+};
+
+const syncFoldersFromBackup = async (userId, backupFolders) => {
+  const folderIdByBackupId = {};
+  const folderIdByName = {};
+
+  const existing = await Folder.find({ userId });
+  existing.forEach((folder) => {
+    folderIdByName[folder.name] = folder._id;
+  });
+
+  for (const folder of backupFolders || []) {
+    if (folderIdByName[folder.name]) {
+      if (folder.id) folderIdByBackupId[folder.id] = folderIdByName[folder.name];
+      continue;
+    }
+
+    const folderCount = await Folder.countDocuments({ userId });
+    assertUnderLimit(folderCount, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
+
+    const created = await Folder.create({
+      userId,
+      name: folder.name,
+      isDefault: !!folder.isDefault,
+    });
+
+    folderIdByName[folder.name] = created._id;
+    if (folder.id) folderIdByBackupId[folder.id] = created._id;
+  }
+
+  return { folderIdByBackupId, folderIdByName };
+};
+
 export const exportBackup = asyncHandler(async (req, res) => {
   const { masterPassword } = req.body;
   const user = await User.findById(req.user._id);
@@ -20,31 +69,50 @@ export const exportBackup = asyncHandler(async (req, res) => {
 
   const [credentials, folders, notes] = await Promise.all([
     Credential.find({ userId: req.user._id }),
-    Folder.find({ userId: req.user._id }),
+    Folder.find({ userId: req.user._id }).sort({ name: 1 }),
     SecureNote.find({ userId: req.user._id }),
   ]);
 
+  const folderById = buildFolderLookup(folders);
+
   const backupData = {
-    version: '1.0',
+    version: '1.1',
     exportedAt: new Date().toISOString(),
-    credentials: credentials.map((c) => ({
-      serviceName: c.serviceName,
-      data: decryptJSON(c.encryptedData, key),
-      folderId: c.folderId,
-      isFavorite: c.isFavorite,
-      tags: c.tags,
-      isDeleted: c.isDeleted,
-      createdAt: c.createdAt,
-      updatedAt: c.updatedAt,
+    folders: folders.map((folder) => ({
+      id: folder._id.toString(),
+      name: folder.name,
+      isDefault: folder.isDefault,
     })),
-    folders: folders.map((f) => ({ name: f.name, isDefault: f.isDefault })),
-    notes: notes.map((n) => ({
-      data: decryptJSON(n.encryptedData, key),
-      folderId: n.folderId,
-      isFavorite: n.isFavorite,
-      createdAt: n.createdAt,
-      updatedAt: n.updatedAt,
-    })),
+    credentials: credentials.map((credential) => {
+      const folder = credential.folderId
+        ? folderById.get(credential.folderId.toString())
+        : null;
+
+      return {
+        serviceName: credential.serviceName,
+        data: decryptJSON(credential.encryptedData, key),
+        folderId: folder ? folder._id.toString() : null,
+        folderName: folder?.name || null,
+        isFavorite: credential.isFavorite,
+        tags: credential.tags,
+        isDeleted: credential.isDeleted,
+        deletedAt: credential.deletedAt,
+        createdAt: credential.createdAt,
+        updatedAt: credential.updatedAt,
+      };
+    }),
+    notes: notes.map((note) => {
+      const folder = note.folderId ? folderById.get(note.folderId.toString()) : null;
+
+      return {
+        data: decryptJSON(note.encryptedData, key),
+        folderId: folder ? folder._id.toString() : null,
+        folderName: folder?.name || null,
+        isFavorite: note.isFavorite,
+        createdAt: note.createdAt,
+        updatedAt: note.updatedAt,
+      };
+    }),
   };
 
   const backupKey = deriveKey(masterPassword + '_backup', user.masterSalt);
@@ -80,14 +148,20 @@ export const importBackup = asyncHandler(async (req, res) => {
     await Promise.all([
       Credential.deleteMany({ userId: req.user._id }),
       SecureNote.deleteMany({ userId: req.user._id }),
+      Folder.deleteMany({ userId: req.user._id }),
     ]);
   }
 
-  const folderMap = {};
-  const existingFolders = await Folder.find({ userId: req.user._id });
-  existingFolders.forEach((f) => { folderMap[f.name] = f._id; });
+  const backupFolders = backupData.folders || [];
+  let newFolderCount = backupFolders.length;
 
-  const newFolders = (backupData.folders || []).filter((f) => !folderMap[f.name]);
+  if (!replace) {
+    const existingNames = new Set(
+      (await Folder.find({ userId: req.user._id }).select('name')).map((folder) => folder.name),
+    );
+    newFolderCount = backupFolders.filter((folder) => !existingNames.has(folder.name)).length;
+  }
+
   const [currentFolderCount, currentCredCount, currentNoteCount] = await Promise.all([
     Folder.countDocuments({ userId: req.user._id }),
     Credential.countDocuments({ userId: req.user._id, isDeleted: false }),
@@ -95,46 +169,45 @@ export const importBackup = asyncHandler(async (req, res) => {
   ]);
 
   if (!replace) {
-    assertUnderLimit(currentFolderCount + newFolders.length, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
+    assertUnderLimit(currentFolderCount + newFolderCount, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
     assertUnderLimit(currentCredCount + (backupData.credentials?.length || 0), LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
     assertUnderLimit(currentNoteCount + (backupData.notes?.length || 0), LIMITS.MAX_NOTES_PER_USER, 'notes');
   } else {
-    assertUnderLimit(newFolders.length, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
+    assertUnderLimit(backupFolders.length, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
     assertUnderLimit(backupData.credentials?.length || 0, LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
     assertUnderLimit(backupData.notes?.length || 0, LIMITS.MAX_NOTES_PER_USER, 'notes');
   }
 
-  for (const f of backupData.folders || []) {
-    if (!folderMap[f.name]) {
-      const folderCount = await Folder.countDocuments({ userId: req.user._id });
-      assertUnderLimit(folderCount, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
-      const folder = await Folder.create({ userId: req.user._id, name: f.name, isDefault: f.isDefault });
-      folderMap[f.name] = folder._id;
-    }
-  }
+  const { folderIdByBackupId, folderIdByName } = await syncFoldersFromBackup(
+    req.user._id,
+    backupFolders,
+  );
 
-  for (const c of backupData.credentials || []) {
+  for (const credential of backupData.credentials || []) {
     const credentialCount = await Credential.countDocuments({ userId: req.user._id, isDeleted: false });
     assertUnderLimit(credentialCount, LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
+
     await Credential.create({
       userId: req.user._id,
-      serviceName: c.serviceName,
-      encryptedData: encryptJSON(c.data, key),
-      folderId: c.folderId,
-      isFavorite: c.isFavorite,
-      tags: c.tags || [],
-      isDeleted: c.isDeleted || false,
+      serviceName: credential.serviceName,
+      encryptedData: encryptJSON(credential.data, key),
+      folderId: resolveImportFolderId(credential, folderIdByBackupId, folderIdByName),
+      isFavorite: credential.isFavorite,
+      tags: credential.tags || [],
+      isDeleted: credential.isDeleted || false,
+      deletedAt: credential.deletedAt || undefined,
     });
   }
 
-  for (const n of backupData.notes || []) {
+  for (const note of backupData.notes || []) {
     const noteCount = await SecureNote.countDocuments({ userId: req.user._id });
     assertUnderLimit(noteCount, LIMITS.MAX_NOTES_PER_USER, 'notes');
+
     await SecureNote.create({
       userId: req.user._id,
-      encryptedData: encryptJSON(n.data, key),
-      folderId: n.folderId,
-      isFavorite: n.isFavorite,
+      encryptedData: encryptJSON(note.data, key),
+      folderId: resolveImportFolderId(note, folderIdByBackupId, folderIdByName),
+      isFavorite: note.isFavorite,
     });
   }
 
@@ -202,7 +275,7 @@ export const exportPDF = asyncHandler(async (req, res) => {
   });
 
   const populatedSections = [
-    ...folderGroups.filter((s) => s.credentials.length || s.notes.length),
+    ...folderGroups,
     ...(unassigned.credentials.length || unassigned.notes.length ? [unassigned] : []),
   ];
 

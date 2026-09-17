@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import Session from '../models/Session.js';
 import { generateToken } from '../utils/crypto.js';
+import { resolveLocationFromIp } from '../utils/ipLocation.js';
 
 const ACCESS_EXPIRY = '15m';
 const REFRESH_EXPIRY_DAYS = 7;
@@ -26,12 +27,15 @@ export const createSession = async (userId, req) => {
   const expiresAt = new Date(Date.now() + REFRESH_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
   const userAgent = req.headers['user-agent'] || 'Unknown';
 
+  const ipAddress = getClientIp(req);
+
   const session = await Session.create({
     userId,
     refreshToken: generateToken(32),
     deviceInfo: parseDevice(userAgent),
     browser: parseBrowser(userAgent),
-    ipAddress: getClientIp(req),
+    ipAddress,
+    location: resolveLocationFromIp(ipAddress),
     expiresAt,
   });
 

@@ -34,6 +34,7 @@ const activityLogSchema = new mongoose.Schema(
     },
     description: { type: String, default: '' },
     ipAddress: { type: String, default: 'Unknown' },
+    location: { type: String, default: '' },
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   { timestamps: true }

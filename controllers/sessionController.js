@@ -1,6 +1,7 @@
 import Session from '../models/Session.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import { logActivity } from '../services/activityService.js';
+import { resolveSessionLocation } from '../utils/ipLocation.js';
 
 export const getSessions = asyncHandler(async (req, res) => {
   const sessions = await Session.find({ userId: req.user._id, isActive: true })
@@ -11,6 +12,7 @@ export const getSessions = asyncHandler(async (req, res) => {
     deviceInfo: s.deviceInfo,
     browser: s.browser,
     ipAddress: s.ipAddress,
+    location: resolveSessionLocation(s),
     lastActive: s.lastActive,
     createdAt: s.createdAt,
     isCurrent: s._id.toString() === req.sessionId?.toString(),

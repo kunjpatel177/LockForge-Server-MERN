@@ -7,6 +7,7 @@ const sessionSchema = new mongoose.Schema(
     deviceInfo: { type: String, default: 'Unknown Device' },
     browser: { type: String, default: 'Unknown Browser' },
     ipAddress: { type: String, default: 'Unknown' },
+    location: { type: String, default: '' },
     isActive: { type: Boolean, default: true },
     lastActive: { type: Date, default: Date.now },
     vaultKeyEncrypted: {
