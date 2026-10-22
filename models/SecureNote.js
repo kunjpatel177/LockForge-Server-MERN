@@ -19,6 +19,4 @@ const secureNoteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-secureNoteSchema.index({ userId: 1 });
-
 export default mongoose.model('SecureNote', secureNoteSchema);

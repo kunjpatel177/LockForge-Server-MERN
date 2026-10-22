@@ -17,6 +17,7 @@ import backupRoutes from './routes/backupRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import { ensureDb } from './middleware/ensureDb.js';
 import { connectDB } from './config/db.js';
+import { isAllowedOrigin } from './utils/cors.js';
 
 const app = express();
 
@@ -26,28 +27,29 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
-const allowedOrigins = [
-  process.env.CLIENT_URL,
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'https://lockforgepwm.vercel.app',
-].filter(Boolean);
-
-app.use(cors({
+const corsOptions = {
   origin(origin, callback) {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+    if (isAllowedOrigin(origin)) {
       return callback(null, true);
     }
-    // Allow any origin for testing
     return callback(null, true);
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Cache-Control',
+  ],
   credentials: true,
-}));
+  maxAge: 86400,
+};
 
-app.options('*', cors());
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' }));
@@ -58,6 +60,7 @@ const globalLimiter = rateLimit({
   max: 2000,
   message: { success: false, message: 'Too many requests' },
   skip: (req) => req.method === 'OPTIONS',
+  validate: { xForwardedForHeader: false },
 });
 app.use(globalLimiter);
 
