@@ -50,6 +50,7 @@ const syncFoldersFromBackup = async (userId, backupFolders) => {
       userId,
       name: folder.name,
       isDefault: !!folder.isDefault,
+      isHidden: !!folder.isHidden,
     });
 
     folderIdByName[folder.name] = created._id;
@@ -82,6 +83,7 @@ export const exportBackup = asyncHandler(async (req, res) => {
       id: folder._id.toString(),
       name: folder.name,
       isDefault: folder.isDefault,
+      isHidden: !!folder.isHidden,
     })),
     credentials: credentials.map((credential) => {
       const folder = credential.folderId
@@ -95,6 +97,7 @@ export const exportBackup = asyncHandler(async (req, res) => {
         folderName: folder?.name || null,
         isFavorite: credential.isFavorite,
         tags: credential.tags,
+        isHidden: !!credential.isHidden,
         isDeleted: credential.isDeleted,
         deletedAt: credential.deletedAt,
         createdAt: credential.createdAt,
@@ -109,6 +112,7 @@ export const exportBackup = asyncHandler(async (req, res) => {
         folderId: folder ? folder._id.toString() : null,
         folderName: folder?.name || null,
         isFavorite: note.isFavorite,
+        isHidden: !!note.isHidden,
         createdAt: note.createdAt,
         updatedAt: note.updatedAt,
       };
@@ -194,6 +198,7 @@ export const importBackup = asyncHandler(async (req, res) => {
       folderId: resolveImportFolderId(credential, folderIdByBackupId, folderIdByName),
       isFavorite: credential.isFavorite,
       tags: credential.tags || [],
+      isHidden: credential.isHidden || false,
       isDeleted: credential.isDeleted || false,
       deletedAt: credential.deletedAt || undefined,
     });
@@ -208,6 +213,7 @@ export const importBackup = asyncHandler(async (req, res) => {
       encryptedData: encryptJSON(note.data, key),
       folderId: resolveImportFolderId(note, folderIdByBackupId, folderIdByName),
       isFavorite: note.isFavorite,
+      isHidden: note.isHidden || false,
     });
   }
 

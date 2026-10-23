@@ -1,4 +1,5 @@
 import SecureNote from '../models/SecureNote.js';
+import Folder from '../models/Folder.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import { encryptJSON, decryptJSON } from '../utils/crypto.js';
 import { logActivity } from '../services/activityService.js';
@@ -14,6 +15,8 @@ const decryptNote = (note, key) => {
     content: data.content || '',
     folderId: note.folderId,
     isFavorite: note.isFavorite,
+    isHidden: !!note.isHidden,
+    hiddenAt: note.hiddenAt,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
   };
@@ -21,6 +24,23 @@ const decryptNote = (note, key) => {
 
 export const getNotes = asyncHandler(async (req, res) => {
   const filter = { userId: req.user._id };
+  if (req.query.hidden === 'true') {
+    filter.isHidden = true;
+  } else {
+    if (req.query.folderId) {
+      const targetFolder = await Folder.findOne({ _id: req.query.folderId, userId: req.user._id });
+      if (!targetFolder?.isHidden) {
+        filter.isHidden = { $ne: true };
+      }
+    } else {
+      filter.isHidden = { $ne: true };
+      const hiddenFolders = await Folder.find({ userId: req.user._id, isHidden: true }).select('_id');
+      if (hiddenFolders.length > 0) {
+        filter.folderId = { $nin: hiddenFolders.map((f) => f._id) };
+      }
+    }
+  }
+
   if (req.query.folderId) filter.folderId = req.query.folderId;
   if (req.query.unassigned === 'true') filter.folderId = null;
   if (req.query.favorite === 'true') filter.isFavorite = true;
@@ -102,4 +122,27 @@ export const deleteNote = asyncHandler(async (req, res) => {
   const data = decryptJSON(note.encryptedData, req.vaultKey);
   await logActivity(req.user._id, 'note_deleted', `Deleted note: ${data.title}`, req);
   res.json({ success: true, message: 'Note deleted' });
+});
+
+export const toggleHideNote = asyncHandler(async (req, res) => {
+  const note = await SecureNote.findOne({ _id: req.params.id, userId: req.user._id });
+  if (!note) throw new AppError('Note not found', 404);
+
+  note.isHidden = !note.isHidden;
+  note.hiddenAt = note.isHidden ? new Date() : undefined;
+  await note.save();
+
+  const data = decryptJSON(note.encryptedData, req.vaultKey);
+  await logActivity(
+    req.user._id,
+    'note_updated',
+    `${note.isHidden ? 'Hidden' : 'Unhidden'} note: ${data.title}`,
+    req,
+  );
+
+  res.json({
+    success: true,
+    message: note.isHidden ? 'Note hidden' : 'Note unhidden',
+    data: decryptNote(note, req.vaultKey),
+  });
 });

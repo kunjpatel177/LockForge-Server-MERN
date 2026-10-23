@@ -1,4 +1,5 @@
 import Credential from '../models/Credential.js';
+import Folder from '../models/Folder.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import { encryptJSON, decryptJSON } from '../utils/crypto.js';
 import { logActivity } from '../services/activityService.js';
@@ -21,6 +22,8 @@ const decryptCredential = (cred, key) => {
     folderId: cred.folderId,
     isFavorite: cred.isFavorite,
     tags: cred.tags,
+    isHidden: !!cred.isHidden,
+    hiddenAt: cred.hiddenAt,
     isDeleted: cred.isDeleted,
     deletedAt: cred.deletedAt,
     createdAt: cred.createdAt,
@@ -36,6 +39,24 @@ export const getCredentials = asyncHandler(async (req, res) => {
 
   const filter = { userId: req.user._id };
   filter.isDeleted = trash === 'true';
+
+  if (req.query.hidden === 'true') {
+    filter.isHidden = true;
+  } else if (trash !== 'true') {
+    if (folderId) {
+      const targetFolder = await Folder.findOne({ _id: folderId, userId: req.user._id });
+      if (!targetFolder?.isHidden) {
+        filter.isHidden = { $ne: true };
+      }
+    } else {
+      filter.isHidden = { $ne: true };
+      const hiddenFolders = await Folder.find({ userId: req.user._id, isHidden: true }).select('_id');
+      if (hiddenFolders.length > 0) {
+        filter.folderId = { $nin: hiddenFolders.map((f) => f._id) };
+      }
+    }
+  }
+
   if (folderId) filter.folderId = folderId;
   if (req.query.unassigned === 'true') filter.folderId = null;
   if (favorite === 'true') filter.isFavorite = true;
@@ -173,6 +194,28 @@ export const toggleFavorite = asyncHandler(async (req, res) => {
   cred.isFavorite = !cred.isFavorite;
   await cred.save();
   res.json({ success: true, data: decryptCredential(cred, req.vaultKey) });
+});
+
+export const toggleHideCredential = asyncHandler(async (req, res) => {
+  const cred = await Credential.findOne({ _id: req.params.id, userId: req.user._id, isDeleted: false });
+  if (!cred) throw new AppError('Credential not found', 404);
+
+  cred.isHidden = !cred.isHidden;
+  cred.hiddenAt = cred.isHidden ? new Date() : undefined;
+  await cred.save();
+
+  await logActivity(
+    req.user._id,
+    'credential_updated',
+    `${cred.isHidden ? 'Hidden' : 'Unhidden'} credential: ${cred.serviceName}`,
+    req,
+  );
+
+  res.json({
+    success: true,
+    message: cred.isHidden ? 'Credential hidden' : 'Credential unhidden',
+    data: decryptCredential(cred, req.vaultKey),
+  });
 });
 
 export { requireVaultUnlock };

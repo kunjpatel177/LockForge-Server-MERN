@@ -6,7 +6,7 @@ import { isWeakPassword, calculatePasswordStrength } from '../utils/passwordStre
 const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
 
 export const getSecurityDashboard = asyncHandler(async (req, res) => {
-  const credentials = await Credential.find({ userId: req.user._id, isDeleted: false });
+  const credentials = await Credential.find({ userId: req.user._id, isDeleted: false, isHidden: { $ne: true } });
   const key = req.vaultKey;
 
   const passwordMap = {};
@@ -59,8 +59,8 @@ export const checkPasswordStrength = asyncHandler(async (req, res) => {
 });
 
 export const generatePassword = asyncHandler(async (req, res) => {
-  const { generatePassword: gen } = await import('../utils/passwordStrength.js');
-  const password = gen(req.body);
+  const { generatePasswordWithOptions } = await import('../utils/passwordStrength.js');
+  const password = generatePasswordWithOptions(req.body);
   const strength = calculatePasswordStrength(password);
   res.json({ success: true, data: { password, strength } });
 });

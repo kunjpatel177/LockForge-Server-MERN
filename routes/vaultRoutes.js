@@ -2,7 +2,7 @@ import { Router } from 'express';
 import {
   getCredentials, getCredential, createCredential, updateCredential,
   deleteCredential, restoreCredential, permanentDeleteCredential,
-  emptyTrash, toggleFavorite, moveCredentialToFolder,
+  emptyTrash, toggleFavorite, toggleHideCredential, moveCredentialToFolder,
 } from '../controllers/vaultController.js';
 import { protect } from '../middleware/auth.js';
 import { requireVaultUnlock } from '../middleware/vaultLock.js';
@@ -27,6 +27,7 @@ router.delete('/:id', deleteCredential);
 router.post('/:id/restore', restoreCredential);
 router.delete('/:id/permanent', permanentDeleteCredential);
 router.patch('/:id/favorite', toggleFavorite);
+router.patch('/:id/hide', toggleHideCredential);
 router.patch('/:id/folder', moveFolderValidation, validate, moveCredentialToFolder);
 
 export default router;

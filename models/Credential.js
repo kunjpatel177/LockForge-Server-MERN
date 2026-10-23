@@ -17,6 +17,8 @@ const credentialSchema = new mongoose.Schema(
     folderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Folder', default: null },
     isFavorite: { type: Boolean, default: false },
     tags: [{ type: String, trim: true }],
+    isHidden: { type: Boolean, default: false },
+    hiddenAt: Date,
     isDeleted: { type: Boolean, default: false },
     deletedAt: Date,
   },
@@ -24,6 +26,7 @@ const credentialSchema = new mongoose.Schema(
 );
 
 credentialSchema.index({ userId: 1, isDeleted: 1 });
+credentialSchema.index({ userId: 1, isHidden: 1 });
 credentialSchema.index({ userId: 1, folderId: 1 });
 credentialSchema.index({ userId: 1, isFavorite: 1 });
 credentialSchema.index({ serviceName: 'text' });

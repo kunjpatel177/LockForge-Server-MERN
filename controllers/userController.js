@@ -18,10 +18,10 @@ export const getProfile = asyncHandler(async (req, res) => {
     '-password -masterVerifier -masterSalt -twoFactorSecret -twoFactorTempSecret -twoFactorOtpHash -twoFactorOtpExpiry -twoFactorOtpPurpose -verificationToken -verificationTokenExpiry -emailChangeToken -emailChangeTokenExpiry -resetPasswordToken -resetPasswordExpiry',
   );
   const [credentialCount, folderCount, noteCount, favoriteCount] = await Promise.all([
-    Credential.countDocuments({ userId: req.user._id, isDeleted: false }),
-    Folder.countDocuments({ userId: req.user._id }),
-    SecureNote.countDocuments({ userId: req.user._id }),
-    Credential.countDocuments({ userId: req.user._id, isFavorite: true, isDeleted: false }),
+    Credential.countDocuments({ userId: req.user._id, isDeleted: false, isHidden: { $ne: true } }),
+    Folder.countDocuments({ userId: req.user._id, isHidden: { $ne: true } }),
+    SecureNote.countDocuments({ userId: req.user._id, isHidden: { $ne: true } }),
+    Credential.countDocuments({ userId: req.user._id, isFavorite: true, isDeleted: false, isHidden: { $ne: true } }),
   ]);
   res.json({
     success: true,

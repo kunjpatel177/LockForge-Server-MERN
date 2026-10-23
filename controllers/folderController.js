@@ -6,14 +6,21 @@ import { logActivity } from '../services/activityService.js';
 import { LIMITS } from '../config/limits.js';
 import { assertBatchSize, assertUnderLimit } from '../utils/limitGuard.js';
 export const getFolders = asyncHandler(async (req, res) => {
-  const folders = await Folder.find({ userId: req.user._id }).sort({ name: 1 });
+  const filter = { userId: req.user._id };
+  if (req.query.hidden === 'true') {
+    filter.isHidden = true;
+  } else {
+    filter.isHidden = { $ne: true };
+  }
+
+  const folders = await Folder.find(filter).sort({ name: 1 });
   const [credCounts, noteCounts] = await Promise.all([
     Credential.aggregate([
-      { $match: { userId: req.user._id, isDeleted: false } },
+      { $match: { userId: req.user._id, isDeleted: false, isHidden: { $ne: true } } },
       { $group: { _id: '$folderId', count: { $sum: 1 } } },
     ]),
     SecureNote.aggregate([
-      { $match: { userId: req.user._id } },
+      { $match: { userId: req.user._id, isHidden: { $ne: true } } },
       { $group: { _id: '$folderId', count: { $sum: 1 } } },
     ]),
   ]);
@@ -23,6 +30,8 @@ export const getFolders = asyncHandler(async (req, res) => {
     id: f._id,
     name: f.name,
     isDefault: f.isDefault,
+    isHidden: !!f.isHidden,
+    hiddenAt: f.hiddenAt,
     credentialCount: credMap[f._id.toString()] || 0,
     noteCount: noteMap[f._id.toString()] || 0,
     createdAt: f.createdAt,
@@ -34,8 +43,8 @@ export const getFolder = asyncHandler(async (req, res) => {
   const folder = await Folder.findOne({ _id: req.params.id, userId: req.user._id });
   if (!folder) throw new AppError('Folder not found', 404);
   const [credentialCount, noteCount] = await Promise.all([
-    Credential.countDocuments({ userId: req.user._id, folderId: folder._id, isDeleted: false }),
-    SecureNote.countDocuments({ userId: req.user._id, folderId: folder._id }),
+    Credential.countDocuments({ userId: req.user._id, folderId: folder._id, isDeleted: false, isHidden: { $ne: true } }),
+    SecureNote.countDocuments({ userId: req.user._id, folderId: folder._id, isHidden: { $ne: true } }),
   ]);
   res.json({
     success: true,
@@ -43,9 +52,38 @@ export const getFolder = asyncHandler(async (req, res) => {
       id: folder._id,
       name: folder.name,
       isDefault: folder.isDefault,
+      isHidden: !!folder.isHidden,
+      hiddenAt: folder.hiddenAt,
       credentialCount,
       noteCount,
       createdAt: folder.createdAt,
+    },
+  });
+});
+
+export const toggleHideFolder = asyncHandler(async (req, res) => {
+  const folder = await Folder.findOne({ _id: req.params.id, userId: req.user._id });
+  if (!folder) throw new AppError('Folder not found', 404);
+
+  folder.isHidden = !folder.isHidden;
+  folder.hiddenAt = folder.isHidden ? new Date() : undefined;
+  await folder.save();
+
+  await logActivity(
+    req.user._id,
+    'folder_updated',
+    `${folder.isHidden ? 'Hidden' : 'Unhidden'} folder: ${folder.name}`,
+    req,
+  );
+
+  res.json({
+    success: true,
+    message: folder.isHidden ? 'Folder hidden' : 'Folder unhidden',
+    data: {
+      id: folder._id,
+      name: folder.name,
+      isHidden: folder.isHidden,
+      hiddenAt: folder.hiddenAt,
     },
   });
 });

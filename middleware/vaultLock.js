@@ -60,15 +60,47 @@ export const clearVaultKey = async (sessionId) => {
   if (!id) return;
 
   await Session.findByIdAndUpdate(id, {
-    $unset: { vaultKeyEncrypted: '', vaultUnlockedUntil: '' },
+    $unset: { vaultKeyEncrypted: '', vaultUnlockedUntil: '', hiddenUnlockedUntil: '' },
   });
 };
 
 export const clearVaultKeysForUser = async (userId) => {
   await Session.updateMany(
     { userId },
-    { $unset: { vaultKeyEncrypted: '', vaultUnlockedUntil: '' } },
+    { $unset: { vaultKeyEncrypted: '', vaultUnlockedUntil: '', hiddenUnlockedUntil: '' } },
   );
+};
+
+export const getHiddenUnlockStatus = async (sessionId) => {
+  const id = normalizeSessionId(sessionId);
+  if (!id) return false;
+
+  const session = await Session.findById(id).select('hiddenUnlockedUntil isActive');
+  if (!session?.isActive || !session.hiddenUnlockedUntil) return false;
+
+  if (session.hiddenUnlockedUntil < new Date()) {
+    await clearHiddenUnlock(id);
+    return false;
+  }
+
+  return true;
+};
+
+export const setHiddenUnlock = async (sessionId, ttlMinutes = 15) => {
+  const id = normalizeSessionId(sessionId);
+  if (!id) return;
+
+  const hiddenUnlockedUntil = new Date(Date.now() + ttlMinutes * 60 * 1000);
+  await Session.findByIdAndUpdate(id, { hiddenUnlockedUntil });
+};
+
+export const clearHiddenUnlock = async (sessionId) => {
+  const id = normalizeSessionId(sessionId);
+  if (!id) return;
+
+  await Session.findByIdAndUpdate(id, {
+    $unset: { hiddenUnlockedUntil: '' },
+  });
 };
 
 export const requireVaultUnlock = async (req, res, next) => {
@@ -78,6 +110,18 @@ export const requireVaultUnlock = async (req, res, next) => {
       return next(new AppError('Vault is locked. Please unlock with your master password.', 403));
     }
     req.vaultKey = key;
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const requireHiddenUnlock = async (req, res, next) => {
+  try {
+    const isUnlocked = await getHiddenUnlockStatus(req.sessionId);
+    if (!isUnlocked) {
+      return next(new AppError('Hidden vault is locked. Please enter your master password to access hidden items.', 403));
+    }
     next();
   } catch (err) {
     next(err);

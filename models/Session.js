@@ -16,6 +16,7 @@ const sessionSchema = new mongoose.Schema(
       authTag: String,
     },
     vaultUnlockedUntil: Date,
+    hiddenUnlockedUntil: Date,
     expiresAt: { type: Date, required: true },
   },
   { timestamps: true }

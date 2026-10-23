@@ -14,6 +14,7 @@ import sessionRoutes from './routes/sessionRoutes.js';
 import activityRoutes from './routes/activityRoutes.js';
 import securityRoutes from './routes/securityRoutes.js';
 import backupRoutes from './routes/backupRoutes.js';
+import hiddenRoutes from './routes/hiddenRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import { ensureDb } from './middleware/ensureDb.js';
 import { connectDB } from './config/db.js';
@@ -108,6 +109,7 @@ app.use('/api/v1/sessions', sessionRoutes);
 app.use('/api/v1/activity', activityRoutes);
 app.use('/api/v1/security', securityRoutes);
 app.use('/api/v1/backup', backupRoutes);
+app.use('/api/v1/hidden', hiddenRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
