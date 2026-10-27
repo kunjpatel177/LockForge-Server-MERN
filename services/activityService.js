@@ -21,21 +21,29 @@ const pruneActivityLogs = async (userId) => {
 };
 
 export const logActivity = async (userId, action, description = '', req = null, metadata = {}) => {
-  try {
-    const ipAddress = req ? getClientIp(req) : 'Unknown';
-    const location = await resolveLocationFromIp(ipAddress);
+  // Capture client IP immediately from req while request context is alive
+  const ipAddress = req ? getClientIp(req) : 'Unknown';
 
-    await ActivityLog.create({
-      userId,
-      action,
-      description,
-      ipAddress,
-      location,
-      metadata,
-    });
+  // Perform location resolution, log creation, and maintenance asynchronously without blocking the API response
+  (async () => {
+    try {
+      const location = await resolveLocationFromIp(ipAddress);
 
-    await pruneActivityLogs(userId);
-  } catch (err) {
-    console.error('Failed to log activity:', err.message);
-  }
+      await ActivityLog.create({
+        userId,
+        action,
+        description,
+        ipAddress,
+        location,
+        metadata,
+      });
+
+      // Sampled pruning (every ~10 logs) to avoid expensive countDocuments on every single action
+      if (Math.random() < 0.1) {
+        await pruneActivityLogs(userId);
+      }
+    } catch (err) {
+      console.error('Failed to log activity:', err.message);
+    }
+  })().catch(() => {});
 };

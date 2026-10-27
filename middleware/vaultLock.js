@@ -4,7 +4,17 @@ import User from '../models/User.js';
 import { deriveKey, verifyMasterPassword, encrypt, decrypt } from '../utils/crypto.js';
 import { AppError } from './errorHandler.js';
 
-const deriveStorageKey = (sessionId) => {
+// In-memory caches for high-throughput zero-latency vault requests
+const vaultKeyMemoryCache = new Map();
+const hiddenUnlockMemoryCache = new Map();
+
+const deriveStorageKeyFast = (sessionId) => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is required');
+  return crypto.createHmac('sha256', secret).update(`lockforge-vault:${sessionId}`).digest();
+};
+
+const deriveStorageKeyLegacy = (sessionId) => {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is required');
   return crypto.pbkdf2Sync(secret, `lockforge-vault:${sessionId}`, 100000, 32, 'sha512');
@@ -23,18 +33,50 @@ export const getVaultKey = async (sessionId) => {
   const id = normalizeSessionId(sessionId);
   if (!id) return null;
 
-  const session = await Session.findById(id).select('vaultKeyEncrypted vaultUnlockedUntil isActive');
+  // 1. Fast in-memory lookup (sub-millisecond, bypasses DB + PBKDF2)
+  const cached = vaultKeyMemoryCache.get(id);
+  if (cached) {
+    if (cached.vaultUnlockedUntil && cached.vaultUnlockedUntil > new Date()) {
+      return cached.key;
+    }
+    vaultKeyMemoryCache.delete(id);
+  }
+
+  // 2. Fallback to MongoDB session lookup
+  const session = await Session.findById(id).select('userId vaultKeyEncrypted vaultUnlockedUntil isActive').lean();
   if (!session?.isActive || !session.vaultKeyEncrypted) return null;
 
-  if (session.vaultUnlockedUntil && session.vaultUnlockedUntil < new Date()) {
+  if (session.vaultUnlockedUntil && new Date(session.vaultUnlockedUntil) < new Date()) {
     await clearVaultKey(id);
     return null;
   }
 
   try {
-    const storageKey = deriveStorageKey(id);
-    const keyB64 = decrypt(session.vaultKeyEncrypted, storageKey);
-    return Buffer.from(keyB64, 'base64');
+    let keyBuffer;
+    try {
+      // Fast HMAC-SHA256 storage key derivation
+      const storageKey = deriveStorageKeyFast(id);
+      const keyB64 = decrypt(session.vaultKeyEncrypted, storageKey);
+      keyBuffer = Buffer.from(keyB64, 'base64');
+    } catch {
+      // Legacy PBKDF2 fallback for older sessions
+      const storageKey = deriveStorageKeyLegacy(id);
+      const keyB64 = decrypt(session.vaultKeyEncrypted, storageKey);
+      keyBuffer = Buffer.from(keyB64, 'base64');
+      // Upgrade session to fast storage key asynchronously
+      const fastKey = deriveStorageKeyFast(id);
+      const reEncrypted = encrypt(keyB64, fastKey);
+      Session.findByIdAndUpdate(id, { vaultKeyEncrypted: reEncrypted }).catch(() => {});
+    }
+
+    // Cache in memory for subsequent requests
+    vaultKeyMemoryCache.set(id, {
+      key: keyBuffer,
+      vaultUnlockedUntil: new Date(session.vaultUnlockedUntil),
+      userId: session.userId ? String(session.userId) : null,
+    });
+
+    return keyBuffer;
   } catch {
     await clearVaultKey(id);
     return null;
@@ -45,9 +87,15 @@ export const setVaultKey = async (sessionId, key, ttlMinutes = 60) => {
   const id = normalizeSessionId(sessionId);
   if (!id || !key) return;
 
-  const storageKey = deriveStorageKey(id);
+  const storageKey = deriveStorageKeyFast(id);
   const encrypted = encrypt(key.toString('base64'), storageKey);
   const vaultUnlockedUntil = new Date(Date.now() + ttlMinutes * 60 * 1000);
+
+  // Update memory cache immediately
+  vaultKeyMemoryCache.set(id, {
+    key,
+    vaultUnlockedUntil,
+  });
 
   await Session.findByIdAndUpdate(id, {
     vaultKeyEncrypted: encrypted,
@@ -59,12 +107,23 @@ export const clearVaultKey = async (sessionId) => {
   const id = normalizeSessionId(sessionId);
   if (!id) return;
 
+  vaultKeyMemoryCache.delete(id);
+  hiddenUnlockMemoryCache.delete(id);
+
   await Session.findByIdAndUpdate(id, {
     $unset: { vaultKeyEncrypted: '', vaultUnlockedUntil: '', hiddenUnlockedUntil: '' },
   });
 };
 
 export const clearVaultKeysForUser = async (userId) => {
+  const uIdStr = String(userId);
+  for (const [sId, cached] of vaultKeyMemoryCache.entries()) {
+    if (cached.userId === uIdStr) {
+      vaultKeyMemoryCache.delete(sId);
+      hiddenUnlockMemoryCache.delete(sId);
+    }
+  }
+
   await Session.updateMany(
     { userId },
     { $unset: { vaultKeyEncrypted: '', vaultUnlockedUntil: '', hiddenUnlockedUntil: '' } },
@@ -75,13 +134,26 @@ export const getHiddenUnlockStatus = async (sessionId) => {
   const id = normalizeSessionId(sessionId);
   if (!id) return false;
 
-  const session = await Session.findById(id).select('hiddenUnlockedUntil isActive');
+  // 1. Fast in-memory lookup
+  const cached = hiddenUnlockMemoryCache.get(id);
+  if (cached) {
+    if (cached.hiddenUnlockedUntil && cached.hiddenUnlockedUntil > new Date()) {
+      return true;
+    }
+    hiddenUnlockMemoryCache.delete(id);
+  }
+
+  const session = await Session.findById(id).select('hiddenUnlockedUntil isActive').lean();
   if (!session?.isActive || !session.hiddenUnlockedUntil) return false;
 
-  if (session.hiddenUnlockedUntil < new Date()) {
+  if (new Date(session.hiddenUnlockedUntil) < new Date()) {
     await clearHiddenUnlock(id);
     return false;
   }
+
+  hiddenUnlockMemoryCache.set(id, {
+    hiddenUnlockedUntil: new Date(session.hiddenUnlockedUntil),
+  });
 
   return true;
 };
@@ -91,12 +163,19 @@ export const setHiddenUnlock = async (sessionId, ttlMinutes = 15) => {
   if (!id) return;
 
   const hiddenUnlockedUntil = new Date(Date.now() + ttlMinutes * 60 * 1000);
+
+  hiddenUnlockMemoryCache.set(id, {
+    hiddenUnlockedUntil,
+  });
+
   await Session.findByIdAndUpdate(id, { hiddenUnlockedUntil });
 };
 
 export const clearHiddenUnlock = async (sessionId) => {
   const id = normalizeSessionId(sessionId);
   if (!id) return;
+
+  hiddenUnlockMemoryCache.delete(id);
 
   await Session.findByIdAndUpdate(id, {
     $unset: { hiddenUnlockedUntil: '' },
