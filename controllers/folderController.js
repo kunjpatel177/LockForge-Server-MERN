@@ -21,7 +21,20 @@ export const getFolders = asyncHandler(async (req, res) => {
     }
   }
 
-  const folders = await Folder.find(filter).sort({ name: 1 });
+  if (req.query.search && req.query.search.trim()) {
+    filter.name = { $regex: req.query.search.trim(), $options: 'i' };
+  }
+
+  const sortParam = req.query.sort || 'name';
+  const orderParam = req.query.order === 'desc' ? -1 : 1;
+  const mongoSortObj = {};
+  if (['name', 'createdAt'].includes(sortParam)) {
+    mongoSortObj[sortParam] = orderParam;
+  } else {
+    mongoSortObj.name = 1;
+  }
+
+  const folders = await Folder.find(filter).sort(mongoSortObj);
   const [credCounts, noteCounts] = await Promise.all([
     Credential.aggregate([
       { $match: { userId: req.user._id, isDeleted: false, isHidden: { $ne: true } } },
@@ -34,7 +47,7 @@ export const getFolders = asyncHandler(async (req, res) => {
   ]);
   const credMap = Object.fromEntries(credCounts.map((c) => [c._id?.toString() || 'null', c.count]));
   const noteMap = Object.fromEntries(noteCounts.map((c) => [c._id?.toString() || 'null', c.count]));
-  const data = folders.map((f) => ({
+  let data = folders.map((f) => ({
     id: f._id,
     name: f.name,
     isDefault: f.isDefault,
@@ -44,9 +57,25 @@ export const getFolders = asyncHandler(async (req, res) => {
     deletedAt: f.deletedAt,
     credentialCount: credMap[f._id.toString()] || 0,
     noteCount: noteMap[f._id.toString()] || 0,
+    totalCount: (credMap[f._id.toString()] || 0) + (noteMap[f._id.toString()] || 0),
     createdAt: f.createdAt,
   }));
-  res.json({ success: true, data });
+
+  if (req.query.filterType === 'with_items') {
+    data = data.filter((f) => f.totalCount > 0);
+  } else if (req.query.filterType === 'empty') {
+    data = data.filter((f) => f.totalCount === 0);
+  }
+
+  if (sortParam === 'items') {
+    data.sort((a, b) => orderParam * (b.totalCount - a.totalCount));
+  } else if (sortParam === 'name') {
+    data.sort((a, b) =>
+      orderParam * a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    );
+  }
+
+  res.json({ success: true, data, count: data.length });
 });
 
 export const getFolder = asyncHandler(async (req, res) => {

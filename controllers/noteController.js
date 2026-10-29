@@ -51,20 +51,49 @@ export const getNotes = asyncHandler(async (req, res) => {
 
     if (req.query.folderId) filter.folderId = req.query.folderId;
     if (req.query.unassigned === 'true') filter.folderId = null;
+    if (req.query.hasFolder === 'true') filter.folderId = { $ne: null };
     if (req.query.favorite === 'true') filter.isFavorite = true;
   }
 
-  const notes = await SecureNote.find(filter).sort({ updatedAt: -1 });
-  let data = notes.map((n) => decryptNote(n, req.vaultKey));
-
-  if (req.query.search) {
-    const q = req.query.search.toLowerCase();
-    data = data.filter(
-      (n) => n.title.toLowerCase().includes(q) || (n.content || '').toLowerCase().includes(q),
-    );
+  const sortField = req.query.sort || 'updatedAt';
+  const sortDirection = req.query.order === 'asc' ? 1 : -1;
+  const mongoSortObj = {};
+  if (['updatedAt', 'createdAt'].includes(sortField)) {
+    mongoSortObj[sortField] = sortDirection;
+  } else {
+    mongoSortObj.updatedAt = -1;
   }
 
-  res.json({ success: true, data });
+  const notes = await SecureNote.find(filter).sort(mongoSortObj);
+  let data = notes.map((n) => decryptNote(n, req.vaultKey));
+
+  if (req.query.search && req.query.search.trim()) {
+    const q = req.query.search.trim().toLowerCase();
+    const scope = req.query.scope || 'all'; // 'all', 'title', 'content'
+    data = data.filter((n) => {
+      const matchTitle = (n.title || '').toLowerCase().includes(q);
+      const matchContent = (n.content || '').toLowerCase().includes(q);
+
+      if (scope === 'title') return matchTitle;
+      if (scope === 'content') return matchContent;
+      return matchTitle || matchContent;
+    });
+  }
+
+  if (sortField === 'title') {
+    data.sort((a, b) =>
+      sortDirection * (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' })
+    );
+  } else if (sortField === 'favoriteFirst') {
+    data.sort((a, b) => {
+      if (a.isFavorite === b.isFavorite) {
+        return new Date(b.updatedAt) - new Date(a.updatedAt);
+      }
+      return a.isFavorite ? -1 : 1;
+    });
+  }
+
+  res.json({ success: true, data, count: data.length });
 });
 
 export const getNote = asyncHandler(async (req, res) => {

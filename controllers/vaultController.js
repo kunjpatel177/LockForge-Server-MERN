@@ -36,7 +36,14 @@ const decryptCredential = (cred, key) => {
 export const getCredentials = asyncHandler(async (req, res) => {
   const key = req.vaultKey;
   const {
-    search, folderId, favorite, sort = 'updatedAt', order = 'desc', trash,
+    search,
+    searchField = 'all',
+    folderId,
+    favorite,
+    hasTags,
+    sort = 'updatedAt',
+    order = 'desc',
+    trash,
   } = req.query;
 
   const filter = { userId: req.user._id };
@@ -62,21 +69,74 @@ export const getCredentials = asyncHandler(async (req, res) => {
   if (folderId) filter.folderId = folderId;
   if (req.query.unassigned === 'true') filter.folderId = null;
   if (favorite === 'true') filter.isFavorite = true;
+  if (hasTags === 'true') filter.tags = { $exists: true, $ne: [] };
 
-  let query = Credential.find(filter);
-  if (search) {
-    query = Credential.find({
-      ...filter,
-      $or: [
-        { serviceName: { $regex: search, $options: 'i' } },
-        { tags: { $regex: search, $options: 'i' } },
-      ],
+  const sortDirection = order === 'asc' ? 1 : -1;
+  const mongoSortObj = {};
+  if (['updatedAt', 'createdAt'].includes(sort)) {
+    mongoSortObj[sort] = sortDirection;
+  } else if (sort === 'serviceName') {
+    mongoSortObj.serviceName = sortDirection;
+  } else {
+    mongoSortObj.updatedAt = -1;
+  }
+
+  const credentials = await Credential.find(filter).sort(mongoSortObj);
+  let decrypted = credentials.map((c) => decryptCredential(c, key));
+
+  if (search && search.trim()) {
+    const q = search.trim().toLowerCase();
+    decrypted = decrypted.filter((c) => {
+      const matchService = (c.serviceName || '').toLowerCase().includes(q);
+      const matchUsername = (c.username || '').toLowerCase().includes(q);
+      const matchEmail = (c.email || '').toLowerCase().includes(q);
+      const matchUrl = (c.url || '').toLowerCase().includes(q);
+      const matchTags = Array.isArray(c.tags) && c.tags.some((t) => t.toLowerCase().includes(q));
+      const matchNotes = (c.notes || '').toLowerCase().includes(q);
+      const matchCustom = Array.isArray(c.customFields) && c.customFields.some((cf) =>
+        (cf.label || '').toLowerCase().includes(q) || (cf.value || '').toLowerCase().includes(q)
+      );
+
+      switch (searchField) {
+        case 'service':
+          return matchService;
+        case 'username_email':
+          return matchUsername || matchEmail;
+        case 'url':
+          return matchUrl;
+        case 'tags':
+          return matchTags;
+        case 'notes':
+          return matchNotes;
+        case 'all':
+        default:
+          return (
+            matchService ||
+            matchUsername ||
+            matchEmail ||
+            matchUrl ||
+            matchTags ||
+            matchNotes ||
+            matchCustom
+          );
+      }
     });
   }
 
-  const sortObj = { [sort]: order === 'asc' ? 1 : -1 };
-  const credentials = await query.sort(sortObj);
-  const decrypted = credentials.map((c) => decryptCredential(c, key));
+  // Case-insensitive sorting
+  if (sort === 'serviceName') {
+    decrypted.sort((a, b) =>
+      sortDirection * a.serviceName.localeCompare(b.serviceName, undefined, { sensitivity: 'base' })
+    );
+  } else if (sort === 'favoriteFirst') {
+    decrypted.sort((a, b) => {
+      if (a.isFavorite === b.isFavorite) {
+        return new Date(b.updatedAt) - new Date(a.updatedAt);
+      }
+      return a.isFavorite ? -1 : 1;
+    });
+  }
+
   res.json({ success: true, data: decrypted, count: decrypted.length });
 });
 
