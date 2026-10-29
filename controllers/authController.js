@@ -5,7 +5,7 @@ import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import {
   hashPassword, verifyPassword, generateSalt, createMasterVerifier, hashToken, generateToken,
 } from '../utils/crypto.js';
-import { sendVerificationEmail, sendPasswordResetEmail, sendTwoFactorOtpEmail } from '../utils/email.js';
+import { sendVerificationEmail, sendPasswordResetEmail, sendTwoFactorOtpEmail, sendLoginNotificationEmail } from '../utils/email.js';
 import { logActivity } from '../services/activityService.js';
 import { createDefaultFolders } from '../services/folderService.js';
 import { createSession, refreshAccessToken, setTokenCookies, clearTokenCookies } from '../services/tokenService.js';
@@ -61,7 +61,7 @@ export const register = asyncHandler(async (req, res) => {
 
   await createDefaultFolders(user._id);
 
-  const { accessToken, refreshToken } = await createSession(user._id, req);
+  const { session, accessToken, refreshToken } = await createSession(user._id, req);
   setTokenCookies(res, accessToken, refreshToken);
 
   res.status(201).json({
@@ -74,7 +74,7 @@ export const register = asyncHandler(async (req, res) => {
     },
   });
 
-  void sendVerificationEmail(email, verificationToken).catch((err) => {
+  void sendVerificationEmail(email, verificationToken, user.name).catch((err) => {
     console.error('Failed to send verification email:', err.message);
   });
   void logActivity(user._id, 'login', 'Account created', req);
@@ -100,7 +100,7 @@ export const login = asyncHandler(async (req, res) => {
       const otp = generateEmailOtp();
       storeUserOtp(user, otp, 'login');
       await user.save();
-      await sendTwoFactorOtpEmail(user.email, otp, 'login');
+      await sendTwoFactorOtpEmail(user.email, otp, 'login', user.name);
     }
 
     return res.json({
@@ -114,9 +114,19 @@ export const login = asyncHandler(async (req, res) => {
     });
   }
 
-  const { accessToken, refreshToken } = await createSession(user._id, req);
+  const { session, accessToken, refreshToken } = await createSession(user._id, req);
   setTokenCookies(res, accessToken, refreshToken);
   await logActivity(user._id, 'login', 'User logged in', req);
+
+  void sendLoginNotificationEmail({
+    email: user.email,
+    userName: user.name,
+    time: session?.createdAt || new Date(),
+    location: session?.location,
+    ipAddress: session?.ipAddress,
+    device: session?.deviceInfo,
+    browser: session?.browser,
+  }).catch((err) => console.error('Failed to send login notification email:', err.message));
 
   res.json({
     success: true,
@@ -155,9 +165,19 @@ export const verifyTwoFactorLogin = asyncHandler(async (req, res) => {
   clearUserOtp(user);
   await user.save();
 
-  const { accessToken, refreshToken } = await createSession(user._id, req);
+  const { session, accessToken, refreshToken } = await createSession(user._id, req);
   setTokenCookies(res, accessToken, refreshToken);
   await logActivity(user._id, 'login', 'User logged in with 2FA', req);
+
+  void sendLoginNotificationEmail({
+    email: user.email,
+    userName: user.name,
+    time: session?.createdAt || new Date(),
+    location: session?.location,
+    ipAddress: session?.ipAddress,
+    device: session?.deviceInfo,
+    browser: session?.browser,
+  }).catch((err) => console.error('Failed to send login notification email:', err.message));
 
   res.json({
     success: true,
@@ -188,7 +208,7 @@ export const resendTwoFactorLogin = asyncHandler(async (req, res) => {
   const otp = generateEmailOtp();
   storeUserOtp(user, otp, 'login');
   await user.save();
-  await sendTwoFactorOtpEmail(user.email, otp, 'login');
+  await sendTwoFactorOtpEmail(user.email, otp, 'login', user.name);
 
   res.json({
     success: true,

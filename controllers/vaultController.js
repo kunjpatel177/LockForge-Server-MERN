@@ -1,5 +1,6 @@
 import Credential from '../models/Credential.js';
 import Folder from '../models/Folder.js';
+import SecureNote from '../models/SecureNote.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import { encryptJSON, decryptJSON } from '../utils/crypto.js';
 import { logActivity } from '../services/activityService.js';
@@ -167,9 +168,30 @@ export const permanentDeleteCredential = asyncHandler(async (req, res) => {
 });
 
 export const emptyTrash = asyncHandler(async (req, res) => {
-  const result = await Credential.deleteMany({ userId: req.user._id, isDeleted: true });
-  await logActivity(req.user._id, 'trash_emptied', `Emptied trash (${result.deletedCount} items)`, req);
-  res.json({ success: true, message: `Permanently deleted ${result.deletedCount} credentials` });
+  const trashedFolders = await Folder.find({ userId: req.user._id, isDeleted: true }).select('_id');
+  const trashedFolderIds = trashedFolders.map((f) => f._id);
+  if (trashedFolderIds.length) {
+    await Credential.updateMany({ folderId: { $in: trashedFolderIds } }, { folderId: null });
+    await SecureNote.updateMany({ folderId: { $in: trashedFolderIds } }, { folderId: null });
+    await Folder.deleteMany({ _id: { $in: trashedFolderIds } });
+  }
+
+  const [credResult, noteResult] = await Promise.all([
+    Credential.deleteMany({ userId: req.user._id, isDeleted: true }),
+    SecureNote.deleteMany({ userId: req.user._id, isDeleted: true }),
+  ]);
+
+  const total = credResult.deletedCount + noteResult.deletedCount + trashedFolderIds.length;
+  await logActivity(req.user._id, 'trash_emptied', `Emptied trash (${total} items)`, req);
+  res.json({
+    success: true,
+    message: `Permanently deleted ${total} items from trash`,
+    data: {
+      credentialsDeleted: credResult.deletedCount,
+      notesDeleted: noteResult.deletedCount,
+      foldersDeleted: trashedFolderIds.length,
+    },
+  });
 });
 
 export const moveCredentialToFolder = asyncHandler(async (req, res) => {

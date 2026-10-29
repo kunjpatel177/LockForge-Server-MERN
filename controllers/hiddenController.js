@@ -90,9 +90,9 @@ export const getHiddenStatus = asyncHandler(async (req, res) => {
 export const getHiddenItems = asyncHandler(async (req, res) => {
   const [credentials, folders, notes, allFolders] = await Promise.all([
     Credential.find({ userId: req.user._id, isHidden: true, isDeleted: false }).sort({ updatedAt: -1 }),
-    Folder.find({ userId: req.user._id, isHidden: true }).sort({ name: 1 }),
-    SecureNote.find({ userId: req.user._id, isHidden: true }).sort({ updatedAt: -1 }),
-    Folder.find({ userId: req.user._id }).select('name'),
+    Folder.find({ userId: req.user._id, isHidden: true, isDeleted: { $ne: true } }).sort({ name: 1 }),
+    SecureNote.find({ userId: req.user._id, isHidden: true, isDeleted: { $ne: true } }).sort({ updatedAt: -1 }),
+    Folder.find({ userId: req.user._id, isDeleted: { $ne: true } }).select('name'),
   ]);
 
   const folderMap = Object.fromEntries(allFolders.map((f) => [f._id.toString(), f.name]));
@@ -104,7 +104,7 @@ export const getHiddenItems = asyncHandler(async (req, res) => {
       { $group: { _id: '$folderId', count: { $sum: 1 } } },
     ]),
     SecureNote.aggregate([
-      { $match: { userId: req.user._id } },
+      { $match: { userId: req.user._id, isDeleted: { $ne: true } } },
       { $group: { _id: '$folderId', count: { $sum: 1 } } },
     ]),
   ]);

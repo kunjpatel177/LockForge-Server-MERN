@@ -231,8 +231,8 @@ export const exportPDF = asyncHandler(async (req, res) => {
 
   const [credentials, notes, folders] = await Promise.all([
     Credential.find({ userId: req.user._id, isDeleted: false }).sort({ serviceName: 1 }),
-    SecureNote.find({ userId: req.user._id }).sort({ updatedAt: -1 }),
-    Folder.find({ userId: req.user._id }).sort({ name: 1 }),
+    SecureNote.find({ userId: req.user._id, isDeleted: false }).sort({ updatedAt: -1 }),
+    Folder.find({ userId: req.user._id, isDeleted: false }).sort({ name: 1 }),
   ]);
 
   const folderGroups = folders.map((folder) => ({
@@ -293,6 +293,7 @@ export const exportPDF = asyncHandler(async (req, res) => {
     credentials,
     notes,
     populatedSections,
+    userPassword: masterPassword,
   });
 
   const filename = `lockforge-export-${new Date().toISOString().split('T')[0]}.pdf`;

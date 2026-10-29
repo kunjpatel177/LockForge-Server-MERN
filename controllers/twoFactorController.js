@@ -26,7 +26,7 @@ const sendDisableOtp = async (user) => {
   const otp = generateEmailOtp();
   storeUserOtp(user, otp, 'disable');
   await user.save();
-  await sendTwoFactorOtpEmail(user.email, otp, 'disable');
+  await sendTwoFactorOtpEmail(user.email, otp, 'disable', user.name);
   return maskEmail(user.email);
 };
 
@@ -79,7 +79,7 @@ export const setupTwoFactor = asyncHandler(async (req, res) => {
     const otp = generateEmailOtp();
     storeUserOtp(user, otp, 'setup');
     data.maskedEmail = maskEmail(user.email);
-    await sendTwoFactorOtpEmail(user.email, otp, 'setup');
+    await sendTwoFactorOtpEmail(user.email, otp, 'setup', user.name);
   }
 
   await user.save();
@@ -186,7 +186,7 @@ const sendRemoveOtp = async (user) => {
   const otp = generateEmailOtp();
   storeUserOtp(user, otp, 'remove');
   await user.save();
-  await sendTwoFactorOtpEmail(user.email, otp, 'disable');
+  await sendTwoFactorOtpEmail(user.email, otp, 'disable', user.name);
   return maskEmail(user.email);
 };
 
@@ -214,7 +214,7 @@ export const setupAddMethod = asyncHandler(async (req, res) => {
     const otp = generateEmailOtp();
     storeUserOtp(user, otp, 'setup');
     data.maskedEmail = maskEmail(user.email);
-    await sendTwoFactorOtpEmail(user.email, otp, 'setup');
+    await sendTwoFactorOtpEmail(user.email, otp, 'setup', user.name);
   }
 
   await user.save();

@@ -17,6 +17,8 @@ const decryptNote = (note, key) => {
     isFavorite: note.isFavorite,
     isHidden: !!note.isHidden,
     hiddenAt: note.hiddenAt,
+    isDeleted: !!note.isDeleted,
+    deletedAt: note.deletedAt,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
   };
@@ -24,26 +26,33 @@ const decryptNote = (note, key) => {
 
 export const getNotes = asyncHandler(async (req, res) => {
   const filter = { userId: req.user._id };
-  if (req.query.hidden === 'true') {
-    filter.isHidden = true;
+  const isTrash = req.query.trash === 'true';
+
+  if (isTrash) {
+    filter.isDeleted = true;
   } else {
-    if (req.query.folderId) {
-      const targetFolder = await Folder.findOne({ _id: req.query.folderId, userId: req.user._id });
-      if (!targetFolder?.isHidden) {
-        filter.isHidden = { $ne: true };
-      }
+    filter.isDeleted = { $ne: true };
+    if (req.query.hidden === 'true') {
+      filter.isHidden = true;
     } else {
-      filter.isHidden = { $ne: true };
-      const hiddenFolders = await Folder.find({ userId: req.user._id, isHidden: true }).select('_id');
-      if (hiddenFolders.length > 0) {
-        filter.folderId = { $nin: hiddenFolders.map((f) => f._id) };
+      if (req.query.folderId) {
+        const targetFolder = await Folder.findOne({ _id: req.query.folderId, userId: req.user._id, isDeleted: { $ne: true } });
+        if (!targetFolder?.isHidden) {
+          filter.isHidden = { $ne: true };
+        }
+      } else {
+        filter.isHidden = { $ne: true };
+        const hiddenFolders = await Folder.find({ userId: req.user._id, isHidden: true, isDeleted: { $ne: true } }).select('_id');
+        if (hiddenFolders.length > 0) {
+          filter.folderId = { $nin: hiddenFolders.map((f) => f._id) };
+        }
       }
     }
-  }
 
-  if (req.query.folderId) filter.folderId = req.query.folderId;
-  if (req.query.unassigned === 'true') filter.folderId = null;
-  if (req.query.favorite === 'true') filter.isFavorite = true;
+    if (req.query.folderId) filter.folderId = req.query.folderId;
+    if (req.query.unassigned === 'true') filter.folderId = null;
+    if (req.query.favorite === 'true') filter.isFavorite = true;
+  }
 
   const notes = await SecureNote.find(filter).sort({ updatedAt: -1 });
   let data = notes.map((n) => decryptNote(n, req.vaultKey));
@@ -67,7 +76,7 @@ export const getNote = asyncHandler(async (req, res) => {
 export const createNote = asyncHandler(async (req, res) => {
   const { title, content, folderId, isFavorite } = req.body;
   if (folderId) await assertFolderOwnership(req.user._id, folderId);
-  const noteCount = await SecureNote.countDocuments({ userId: req.user._id });
+  const noteCount = await SecureNote.countDocuments({ userId: req.user._id, isDeleted: { $ne: true } });
   assertUnderLimit(noteCount, LIMITS.MAX_NOTES_PER_USER, 'notes');
   const encryptedData = encryptJSON({ title, content: content || '' }, req.vaultKey);
   const note = await SecureNote.create({
@@ -117,11 +126,32 @@ export const moveNoteToFolder = asyncHandler(async (req, res) => {
 });
 
 export const deleteNote = asyncHandler(async (req, res) => {
-  const note = await SecureNote.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+  const note = await SecureNote.findOne({ _id: req.params.id, userId: req.user._id, isDeleted: { $ne: true } });
   if (!note) throw new AppError('Note not found', 404);
+  note.isDeleted = true;
+  note.deletedAt = new Date();
+  await note.save();
   const data = decryptJSON(note.encryptedData, req.vaultKey);
-  await logActivity(req.user._id, 'note_deleted', `Deleted note: ${data.title}`, req);
-  res.json({ success: true, message: 'Note deleted' });
+  await logActivity(req.user._id, 'note_deleted', `Moved note to trash: ${data.title}`, req);
+  res.json({ success: true, message: 'Note moved to trash' });
+});
+
+export const restoreNote = asyncHandler(async (req, res) => {
+  const note = await SecureNote.findOne({ _id: req.params.id, userId: req.user._id, isDeleted: true });
+  if (!note) throw new AppError('Note not found in trash', 404);
+  note.isDeleted = false;
+  note.deletedAt = undefined;
+  await note.save();
+  const data = decryptJSON(note.encryptedData, req.vaultKey);
+  await logActivity(req.user._id, 'note_restored', `Restored note: ${data.title}`, req);
+  res.json({ success: true, data: decryptNote(note, req.vaultKey) });
+});
+
+export const permanentDeleteNote = asyncHandler(async (req, res) => {
+  const note = await SecureNote.findOneAndDelete({ _id: req.params.id, userId: req.user._id, isDeleted: true });
+  if (!note) throw new AppError('Note not found in trash', 404);
+  await logActivity(req.user._id, 'note_permanently_deleted', 'Permanently deleted note', req);
+  res.json({ success: true, message: 'Note permanently deleted' });
 });
 
 export const toggleHideNote = asyncHandler(async (req, res) => {
