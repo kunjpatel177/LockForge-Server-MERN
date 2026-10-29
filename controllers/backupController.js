@@ -19,8 +19,11 @@ const buildFolderLookup = (folders) => {
 };
 
 const resolveImportFolderId = (entry, folderIdByBackupId, folderIdByName) => {
-  if (entry.folderName && folderIdByName[entry.folderName]) {
-    return folderIdByName[entry.folderName];
+  if (entry.folderName) {
+    const byName =
+      folderIdByName[entry.folderName] ||
+      folderIdByName[entry.folderName.trim().toLowerCase()];
+    if (byName) return byName;
   }
   if (entry.folderId && folderIdByBackupId[entry.folderId]) {
     return folderIdByBackupId[entry.folderId];
@@ -28,36 +31,72 @@ const resolveImportFolderId = (entry, folderIdByBackupId, folderIdByName) => {
   return null;
 };
 
-const syncFoldersFromBackup = async (userId, backupFolders) => {
+const syncFoldersFromBackup = async (userId, backupFolders, isReplaceAll = false) => {
   const folderIdByBackupId = {};
   const folderIdByName = {};
+  let foldersCreated = 0;
+  let foldersUpdated = 0;
 
-  const existing = await Folder.find({ userId });
+  const existing = await Folder.find({ userId, isDeleted: { $ne: true } });
+  const existingByName = new Map();
   existing.forEach((folder) => {
+    existingByName.set(folder.name.trim().toLowerCase(), folder);
     folderIdByName[folder.name] = folder._id;
+    folderIdByName[folder.name.trim().toLowerCase()] = folder._id;
   });
 
   for (const folder of backupFolders || []) {
-    if (folderIdByName[folder.name]) {
-      if (folder.id) folderIdByBackupId[folder.id] = folderIdByName[folder.name];
+    const lookupKey = (folder.name || '').trim().toLowerCase();
+    const existingFolder = !isReplaceAll ? existingByName.get(lookupKey) : null;
+
+    if (existingFolder) {
+      if (folder.id) folderIdByBackupId[folder.id] = existingFolder._id;
+      folderIdByName[folder.name] = existingFolder._id;
+      folderIdByName[lookupKey] = existingFolder._id;
+
+      // Ensure hidden folders stay hidden:
+      // If either existing was hidden OR backup folder is marked hidden, keep it hidden
+      const shouldBeHidden = Boolean(existingFolder.isHidden || folder.isHidden);
+      let changed = false;
+
+      if (existingFolder.isHidden !== shouldBeHidden) {
+        existingFolder.isHidden = shouldBeHidden;
+        existingFolder.hiddenAt = shouldBeHidden
+          ? (existingFolder.hiddenAt || (folder.hiddenAt ? new Date(folder.hiddenAt) : new Date()))
+          : undefined;
+        changed = true;
+      } else if (shouldBeHidden && !existingFolder.hiddenAt) {
+        existingFolder.hiddenAt = folder.hiddenAt ? new Date(folder.hiddenAt) : new Date();
+        changed = true;
+      }
+
+      if (changed) {
+        await existingFolder.save();
+        foldersUpdated += 1;
+      }
       continue;
     }
 
-    const folderCount = await Folder.countDocuments({ userId });
+    const folderCount = await Folder.countDocuments({ userId, isDeleted: { $ne: true } });
     assertUnderLimit(folderCount, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
 
+    const isHidden = !!folder.isHidden;
     const created = await Folder.create({
       userId,
       name: folder.name,
       isDefault: !!folder.isDefault,
-      isHidden: !!folder.isHidden,
+      isHidden,
+      hiddenAt: isHidden ? (folder.hiddenAt ? new Date(folder.hiddenAt) : new Date()) : undefined,
     });
 
+    foldersCreated += 1;
     folderIdByName[folder.name] = created._id;
+    folderIdByName[lookupKey] = created._id;
     if (folder.id) folderIdByBackupId[folder.id] = created._id;
+    existingByName.set(lookupKey, created);
   }
 
-  return { folderIdByBackupId, folderIdByName };
+  return { folderIdByBackupId, folderIdByName, foldersCreated, foldersUpdated };
 };
 
 export const exportBackup = asyncHandler(async (req, res) => {
@@ -84,6 +123,9 @@ export const exportBackup = asyncHandler(async (req, res) => {
       name: folder.name,
       isDefault: folder.isDefault,
       isHidden: !!folder.isHidden,
+      hiddenAt: folder.hiddenAt || (folder.isHidden ? folder.updatedAt : undefined),
+      isDeleted: !!folder.isDeleted,
+      deletedAt: folder.deletedAt || undefined,
     })),
     credentials: credentials.map((credential) => {
       const folder = credential.folderId
@@ -98,6 +140,7 @@ export const exportBackup = asyncHandler(async (req, res) => {
         isFavorite: credential.isFavorite,
         tags: credential.tags,
         isHidden: !!credential.isHidden,
+        hiddenAt: credential.hiddenAt || (credential.isHidden ? credential.updatedAt : undefined),
         isDeleted: credential.isDeleted,
         deletedAt: credential.deletedAt,
         createdAt: credential.createdAt,
@@ -113,6 +156,9 @@ export const exportBackup = asyncHandler(async (req, res) => {
         folderName: folder?.name || null,
         isFavorite: note.isFavorite,
         isHidden: !!note.isHidden,
+        hiddenAt: note.hiddenAt || (note.isHidden ? note.updatedAt : undefined),
+        isDeleted: note.isDeleted,
+        deletedAt: note.deletedAt,
         createdAt: note.createdAt,
         updatedAt: note.updatedAt,
       };
@@ -133,7 +179,9 @@ export const exportBackup = asyncHandler(async (req, res) => {
 });
 
 export const importBackup = asyncHandler(async (req, res) => {
-  const { masterPassword, backup, replace = false } = req.body;
+  const { masterPassword, backup, replace = false, mode } = req.body;
+  const isReplaceAll = mode === 'replace_all' || (replace === true && mode !== 'smart_merge');
+
   const user = await User.findById(req.user._id);
   if (!verifyMasterPassword(masterPassword, user.masterSalt, user.masterVerifier)) {
     throw new AppError('Invalid master password', 401);
@@ -148,7 +196,11 @@ export const importBackup = asyncHandler(async (req, res) => {
     throw new AppError('Invalid backup file or master password', 400);
   }
 
-  if (replace) {
+  const backupFolders = backupData.folders || [];
+  const backupCredentials = backupData.credentials || [];
+  const backupNotes = backupData.notes || [];
+
+  if (isReplaceAll) {
     await Promise.all([
       Credential.deleteMany({ userId: req.user._id }),
       SecureNote.deleteMany({ userId: req.user._id }),
@@ -156,69 +208,155 @@ export const importBackup = asyncHandler(async (req, res) => {
     ]);
   }
 
-  const backupFolders = backupData.folders || [];
-  let newFolderCount = backupFolders.length;
+  // Sync / create folders
+  const {
+    folderIdByBackupId,
+    folderIdByName,
+    foldersCreated,
+    foldersUpdated,
+  } = await syncFoldersFromBackup(req.user._id, backupFolders, isReplaceAll);
 
-  if (!replace) {
-    const existingNames = new Set(
-      (await Folder.find({ userId: req.user._id }).select('name')).map((folder) => folder.name),
-    );
-    newFolderCount = backupFolders.filter((folder) => !existingNames.has(folder.name)).length;
-  }
+  // Sync credentials
+  let credentialsCreated = 0;
+  let credentialsUpdated = 0;
 
-  const [currentFolderCount, currentCredCount, currentNoteCount] = await Promise.all([
-    Folder.countDocuments({ userId: req.user._id }),
-    Credential.countDocuments({ userId: req.user._id, isDeleted: false }),
-    SecureNote.countDocuments({ userId: req.user._id }),
-  ]);
-
-  if (!replace) {
-    assertUnderLimit(currentFolderCount + newFolderCount, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
-    assertUnderLimit(currentCredCount + (backupData.credentials?.length || 0), LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
-    assertUnderLimit(currentNoteCount + (backupData.notes?.length || 0), LIMITS.MAX_NOTES_PER_USER, 'notes');
-  } else {
-    assertUnderLimit(backupFolders.length, LIMITS.MAX_FOLDERS_PER_USER, 'folders');
-    assertUnderLimit(backupData.credentials?.length || 0, LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
-    assertUnderLimit(backupData.notes?.length || 0, LIMITS.MAX_NOTES_PER_USER, 'notes');
-  }
-
-  const { folderIdByBackupId, folderIdByName } = await syncFoldersFromBackup(
-    req.user._id,
-    backupFolders,
-  );
-
-  for (const credential of backupData.credentials || []) {
-    const credentialCount = await Credential.countDocuments({ userId: req.user._id, isDeleted: false });
-    assertUnderLimit(credentialCount, LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
-
-    await Credential.create({
-      userId: req.user._id,
-      serviceName: credential.serviceName,
-      encryptedData: encryptJSON(credential.data, key),
-      folderId: resolveImportFolderId(credential, folderIdByBackupId, folderIdByName),
-      isFavorite: credential.isFavorite,
-      tags: credential.tags || [],
-      isHidden: credential.isHidden || false,
-      isDeleted: credential.isDeleted || false,
-      deletedAt: credential.deletedAt || undefined,
+  const existingCredMap = new Map();
+  if (!isReplaceAll) {
+    const existingCreds = await Credential.find({ userId: req.user._id, isDeleted: false });
+    existingCreds.forEach((c) => {
+      existingCredMap.set(c.serviceName.trim().toLowerCase(), c);
     });
   }
 
-  for (const note of backupData.notes || []) {
-    const noteCount = await SecureNote.countDocuments({ userId: req.user._id });
-    assertUnderLimit(noteCount, LIMITS.MAX_NOTES_PER_USER, 'notes');
+  for (const credential of backupCredentials) {
+    const lookupKey = (credential.serviceName || '').trim().toLowerCase();
+    const existingCred = !isReplaceAll ? existingCredMap.get(lookupKey) : null;
+    const targetFolderId = resolveImportFolderId(credential, folderIdByBackupId, folderIdByName);
 
-    await SecureNote.create({
-      userId: req.user._id,
-      encryptedData: encryptJSON(note.data, key),
-      folderId: resolveImportFolderId(note, folderIdByBackupId, folderIdByName),
-      isFavorite: note.isFavorite,
-      isHidden: note.isHidden || false,
-    });
+    if (existingCred) {
+      existingCred.encryptedData = encryptJSON(credential.data, key);
+      existingCred.folderId = targetFolderId;
+      if (credential.isFavorite !== undefined) existingCred.isFavorite = !!credential.isFavorite;
+      if (credential.tags) existingCred.tags = credential.tags || [];
+
+      // Hidden credentials MUST stay hidden
+      const shouldBeHidden = Boolean(existingCred.isHidden || credential.isHidden);
+      existingCred.isHidden = shouldBeHidden;
+      existingCred.hiddenAt = shouldBeHidden
+        ? (existingCred.hiddenAt || (credential.hiddenAt ? new Date(credential.hiddenAt) : new Date()))
+        : undefined;
+
+      if (credential.isDeleted !== undefined) {
+        existingCred.isDeleted = !!credential.isDeleted;
+        existingCred.deletedAt = credential.deletedAt ? new Date(credential.deletedAt) : undefined;
+      }
+      await existingCred.save();
+      credentialsUpdated += 1;
+    } else {
+      const credentialCount = await Credential.countDocuments({ userId: req.user._id, isDeleted: false });
+      assertUnderLimit(credentialCount, LIMITS.MAX_CREDENTIALS_PER_USER, 'credentials');
+
+      const isHidden = !!credential.isHidden;
+      const created = await Credential.create({
+        userId: req.user._id,
+        serviceName: credential.serviceName,
+        encryptedData: encryptJSON(credential.data, key),
+        folderId: targetFolderId,
+        isFavorite: !!credential.isFavorite,
+        tags: credential.tags || [],
+        isHidden,
+        hiddenAt: isHidden ? (credential.hiddenAt ? new Date(credential.hiddenAt) : new Date()) : undefined,
+        isDeleted: !!credential.isDeleted,
+        deletedAt: credential.deletedAt ? new Date(credential.deletedAt) : undefined,
+      });
+      credentialsCreated += 1;
+      existingCredMap.set(lookupKey, created);
+    }
   }
 
-  await logActivity(req.user._id, 'restore', 'Vault restored from backup', req);
-  res.json({ success: true, message: 'Backup restored successfully' });
+  // Sync secure notes
+  let notesCreated = 0;
+  let notesUpdated = 0;
+
+  const existingNoteMap = new Map();
+  if (!isReplaceAll) {
+    const existingNotes = await SecureNote.find({ userId: req.user._id, isDeleted: false });
+    for (const note of existingNotes) {
+      try {
+        const data = decryptJSON(note.encryptedData, key);
+        if (data?.title) {
+          existingNoteMap.set(data.title.trim().toLowerCase(), note);
+        }
+      } catch {
+        // Skip un-decryptable note
+      }
+    }
+  }
+
+  for (const note of backupNotes) {
+    const noteTitle = (note.data?.title || 'Untitled Note').trim();
+    const lookupKey = noteTitle.toLowerCase();
+    const existingNote = !isReplaceAll ? existingNoteMap.get(lookupKey) : null;
+    const targetFolderId = resolveImportFolderId(note, folderIdByBackupId, folderIdByName);
+
+    if (existingNote) {
+      existingNote.encryptedData = encryptJSON(note.data, key);
+      existingNote.folderId = targetFolderId;
+      if (note.isFavorite !== undefined) existingNote.isFavorite = !!note.isFavorite;
+
+      // Hidden notes MUST stay hidden
+      const shouldBeHidden = Boolean(existingNote.isHidden || note.isHidden);
+      existingNote.isHidden = shouldBeHidden;
+      existingNote.hiddenAt = shouldBeHidden
+        ? (existingNote.hiddenAt || (note.hiddenAt ? new Date(note.hiddenAt) : new Date()))
+        : undefined;
+
+      if (note.isDeleted !== undefined) {
+        existingNote.isDeleted = !!note.isDeleted;
+        existingNote.deletedAt = note.deletedAt ? new Date(note.deletedAt) : undefined;
+      }
+      await existingNote.save();
+      notesUpdated += 1;
+    } else {
+      const noteCount = await SecureNote.countDocuments({ userId: req.user._id, isDeleted: false });
+      assertUnderLimit(noteCount, LIMITS.MAX_NOTES_PER_USER, 'notes');
+
+      const isHidden = !!note.isHidden;
+      const created = await SecureNote.create({
+        userId: req.user._id,
+        encryptedData: encryptJSON(note.data, key),
+        folderId: targetFolderId,
+        isFavorite: !!note.isFavorite,
+        isHidden,
+        hiddenAt: isHidden ? (note.hiddenAt ? new Date(note.hiddenAt) : new Date()) : undefined,
+        isDeleted: !!note.isDeleted,
+        deletedAt: note.deletedAt ? new Date(note.deletedAt) : undefined,
+      });
+      notesCreated += 1;
+      existingNoteMap.set(lookupKey, created);
+    }
+  }
+
+  const actionMsg = isReplaceAll
+    ? `Vault restored (all replaced: ${credentialsCreated} creds, ${notesCreated} notes, ${foldersCreated} folders)`
+    : `Vault merged (${credentialsUpdated} creds updated, ${credentialsCreated} added, ${notesUpdated} notes updated, ${notesCreated} added)`;
+  await logActivity(req.user._id, 'restore', actionMsg, req);
+
+  res.json({
+    success: true,
+    message: isReplaceAll ? 'Vault replaced successfully from backup' : 'Backup merged successfully with vault',
+    data: {
+      mode: isReplaceAll ? 'replace_all' : 'smart_merge',
+      summary: {
+        credentialsUpdated,
+        credentialsCreated,
+        notesUpdated,
+        notesCreated,
+        foldersUpdated,
+        foldersCreated,
+      },
+    },
+  });
 });
 
 export const exportPDF = asyncHandler(async (req, res) => {
@@ -238,10 +376,11 @@ export const exportPDF = asyncHandler(async (req, res) => {
   const folderGroups = folders.map((folder) => ({
     id: folder._id.toString(),
     name: folder.name,
+    isHidden: !!folder.isHidden,
     credentials: [],
     notes: [],
   }));
-  const unassigned = { name: 'Unassigned', credentials: [], notes: [] };
+  const unassigned = { name: 'Unassigned', isHidden: false, credentials: [], notes: [] };
 
   credentials.forEach((cred) => {
     const data = decryptJSON(cred.encryptedData, key);
@@ -254,6 +393,7 @@ export const exportPDF = asyncHandler(async (req, res) => {
       notes: data.notes || '',
       customFields: data.customFields || [],
       updatedAt: cred.updatedAt,
+      isHidden: !!cred.isHidden,
     };
     if (cred.folderId) {
       const group = folderGroups.find((g) => g.id === cred.folderId.toString());
@@ -270,6 +410,7 @@ export const exportPDF = asyncHandler(async (req, res) => {
       title: data.title || 'Untitled Note',
       content: data.content || '',
       updatedAt: note.updatedAt,
+      isHidden: !!note.isHidden,
     };
     if (note.folderId) {
       const group = folderGroups.find((g) => g.id === note.folderId.toString());
@@ -296,7 +437,7 @@ export const exportPDF = asyncHandler(async (req, res) => {
     userPassword: masterPassword,
   });
 
-  const filename = `lockforge-export-${new Date().toISOString().split('T')[0]}.pdf`;
+  const filename = `lockforge-export-${new Date().toISOString().split('T')[0]}-${new Date().toLocaleTimeString()}.pdf`;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
   res.send(pdfBuffer);

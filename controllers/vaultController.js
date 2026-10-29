@@ -1,11 +1,12 @@
 import Credential from '../models/Credential.js';
 import Folder from '../models/Folder.js';
 import SecureNote from '../models/SecureNote.js';
+import User from '../models/User.js';
 import { AppError, asyncHandler } from '../middleware/errorHandler.js';
-import { encryptJSON, decryptJSON } from '../utils/crypto.js';
+import { encryptJSON, decryptJSON, verifyMasterPassword, verifyPassword } from '../utils/crypto.js';
 import { logActivity } from '../services/activityService.js';
 import { requireVaultUnlock } from '../middleware/vaultLock.js';
-import { assertFolderOwnership } from '../services/folderService.js';
+import { assertFolderOwnership, createDefaultFolders } from '../services/folderService.js';
 import { LIMITS } from '../config/limits.js';
 import { assertUnderLimit } from '../utils/limitGuard.js';
 
@@ -190,6 +191,61 @@ export const emptyTrash = asyncHandler(async (req, res) => {
       credentialsDeleted: credResult.deletedCount,
       notesDeleted: noteResult.deletedCount,
       foldersDeleted: trashedFolderIds.length,
+    },
+  });
+});
+
+export const deleteAllCredentials = asyncHandler(async (req, res) => {
+  const { permanent = false } = req.body || {};
+
+  if (permanent) {
+    const result = await Credential.deleteMany({ userId: req.user._id });
+    await logActivity(req.user._id, 'credential_deleted', `Permanently deleted all credentials (${result.deletedCount} items)`, req);
+    return res.json({ success: true, message: `Permanently deleted ${result.deletedCount} credentials` });
+  }
+
+  const result = await Credential.updateMany(
+    { userId: req.user._id, isDeleted: false },
+    { isDeleted: true, deletedAt: new Date() }
+  );
+
+  await logActivity(req.user._id, 'credential_deleted', `Moved all credentials to trash (${result.modifiedCount} items)`, req);
+  res.json({ success: true, message: `Moved ${result.modifiedCount} credentials to trash` });
+});
+
+export const purgeAllVaultData = asyncHandler(async (req, res) => {
+  const { masterPassword, password } = req.body || {};
+  const user = await User.findById(req.user._id);
+
+  let verified = false;
+  if (masterPassword) {
+    verified = verifyMasterPassword(masterPassword, user.masterSalt, user.masterVerifier);
+  } else if (password) {
+    verified = await verifyPassword(user.password, password);
+  }
+
+  if (!verified) {
+    throw new AppError('Incorrect password provided to confirm vault purge', 401);
+  }
+
+  const [credResult, noteResult, folderResult] = await Promise.all([
+    Credential.deleteMany({ userId: user._id }),
+    SecureNote.deleteMany({ userId: user._id }),
+    Folder.deleteMany({ userId: user._id }),
+  ]);
+
+  await createDefaultFolders(user._id);
+
+  const total = credResult.deletedCount + noteResult.deletedCount + folderResult.deletedCount;
+  await logActivity(user._id, 'vault_cleared', `Permanently purged all vault data (${total} items removed)`, req);
+
+  res.json({
+    success: true,
+    message: `All vault data cleared successfully (${credResult.deletedCount} credentials, ${noteResult.deletedCount} notes, ${folderResult.deletedCount} folders permanently deleted)`,
+    data: {
+      credentialsDeleted: credResult.deletedCount,
+      notesDeleted: noteResult.deletedCount,
+      foldersDeleted: folderResult.deletedCount,
     },
   });
 });

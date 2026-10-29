@@ -5,6 +5,7 @@ import {
   createFolder,
   updateFolder,
   deleteFolder,
+  deleteAllFolders,
   restoreFolder,
   permanentDeleteFolder,
   assignItemsToFolder,
@@ -29,6 +30,7 @@ router.post('/', folderValidation, validate, createFolder);
 router.put('/:id', folderValidation, validate, updateFolder);
 router.patch('/:id/hide', toggleHideFolder);
 router.post('/:id/assign', assignItemsValidation, validate, assignItemsToFolder);
+router.delete('/all', deleteAllFolders);
 router.delete('/:id', deleteFolder);
 router.post('/:id/restore', restoreFolder);
 router.delete('/:id/permanent', permanentDeleteFolder);

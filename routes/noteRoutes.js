@@ -5,6 +5,7 @@ import {
   createNote,
   updateNote,
   deleteNote,
+  deleteAllNotes,
   restoreNote,
   permanentDeleteNote,
   moveNoteToFolder,
@@ -30,6 +31,7 @@ router.post('/', noteValidation, validate, createNote);
 router.put('/:id', noteValidation, validate, updateNote);
 router.patch('/:id/hide', toggleHideNote);
 router.patch('/:id/folder', moveFolderValidation, validate, moveNoteToFolder);
+router.delete('/all', deleteAllNotes);
 router.delete('/:id', deleteNote);
 router.post('/:id/restore', restoreNote);
 router.delete('/:id/permanent', permanentDeleteNote);

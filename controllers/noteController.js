@@ -154,6 +154,24 @@ export const permanentDeleteNote = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Note permanently deleted' });
 });
 
+export const deleteAllNotes = asyncHandler(async (req, res) => {
+  const { permanent = false } = req.body || {};
+
+  if (permanent) {
+    const result = await SecureNote.deleteMany({ userId: req.user._id });
+    await logActivity(req.user._id, 'note_deleted', `Permanently deleted all notes (${result.deletedCount} items)`, req);
+    return res.json({ success: true, message: `Permanently deleted ${result.deletedCount} secure notes` });
+  }
+
+  const result = await SecureNote.updateMany(
+    { userId: req.user._id, isDeleted: { $ne: true } },
+    { isDeleted: true, deletedAt: new Date() }
+  );
+
+  await logActivity(req.user._id, 'note_deleted', `Moved all notes to trash (${result.modifiedCount} items)`, req);
+  res.json({ success: true, message: `Moved ${result.modifiedCount} secure notes to trash` });
+});
+
 export const toggleHideNote = asyncHandler(async (req, res) => {
   const note = await SecureNote.findOne({ _id: req.params.id, userId: req.user._id });
   if (!note) throw new AppError('Note not found', 404);

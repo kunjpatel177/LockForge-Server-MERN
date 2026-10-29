@@ -5,6 +5,7 @@ import { AppError, asyncHandler } from '../middleware/errorHandler.js';
 import { logActivity } from '../services/activityService.js';
 import { LIMITS } from '../config/limits.js';
 import { assertBatchSize, assertUnderLimit } from '../utils/limitGuard.js';
+import { createDefaultFolders } from '../services/folderService.js';
 export const getFolders = asyncHandler(async (req, res) => {
   const filter = { userId: req.user._id };
   const isTrash = req.query.trash === 'true';
@@ -165,6 +166,27 @@ export const permanentDeleteFolder = asyncHandler(async (req, res) => {
   await folder.deleteOne();
   await logActivity(req.user._id, 'folder_permanently_deleted', `Permanently deleted folder: ${folder.name}`, req);
   res.json({ success: true, message: 'Folder permanently deleted' });
+});
+
+export const deleteAllFolders = asyncHandler(async (req, res) => {
+  const { permanent = false } = req.body || {};
+
+  if (permanent) {
+    await Credential.updateMany({ userId: req.user._id }, { folderId: null });
+    await SecureNote.updateMany({ userId: req.user._id }, { folderId: null });
+    const result = await Folder.deleteMany({ userId: req.user._id });
+    await createDefaultFolders(req.user._id);
+    await logActivity(req.user._id, 'folder_deleted', `Permanently deleted all folders (${result.deletedCount} items)`, req);
+    return res.json({ success: true, message: `Permanently deleted ${result.deletedCount} folders` });
+  }
+
+  const result = await Folder.updateMany(
+    { userId: req.user._id, isDeleted: { $ne: true } },
+    { isDeleted: true, deletedAt: new Date() }
+  );
+
+  await logActivity(req.user._id, 'folder_deleted', `Moved all folders to trash (${result.modifiedCount} items)`, req);
+  res.json({ success: true, message: `Moved ${result.modifiedCount} folders to trash` });
 });
 
 export const assignItemsToFolder = asyncHandler(async (req, res) => {

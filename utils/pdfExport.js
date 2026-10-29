@@ -1,6 +1,13 @@
 import PDFDocument from 'pdfkit';
 
 const BRAND = '#4f46e5';
+const BRAND2 = {
+  start: '#4f46e5',
+  middle: '#8b5cf6',
+  end: '#08cdf0'
+};
+
+
 const BRAND_LIGHT = '#eef2ff';
 const MUTED = '#64748b';
 const TEXT = '#0f172a';
@@ -263,9 +270,13 @@ const getCredentialHeight = (doc, cred) => {
   const layout = buildLayout(doc);
   const fields = collectCredentialFields(cred);
 
+  const titleText = cred.isHidden
+    ? `1. ${cred.serviceName}  [HIDDEN]`
+    : `1. ${cred.serviceName}`;
+
   const titleHeight = measureText(
     doc,
-    `1. ${cred.serviceName}`,
+    titleText,
     layout.pageWidth - 24,
     11,
     true,
@@ -337,7 +348,11 @@ const drawCredentialCard = (doc, cred, index) => {
 
   doc.y = cardY + 10;
 
-  writeFlow(doc, `${index + 1}. ${cred.serviceName}`, {
+  const titleText = cred.isHidden
+    ? `${index + 1}. ${cred.serviceName}  [HIDDEN]`
+    : `${index + 1}. ${cred.serviceName}`;
+
+  writeFlow(doc, titleText, {
     x: layout.left + 12,
     width: layout.pageWidth - 24,
     size: 11,
@@ -368,9 +383,13 @@ const drawCredentialCard = (doc, cred, index) => {
 const getNoteHeight = (doc, note) => {
   const layout = buildLayout(doc);
 
+  const titleText = note.isHidden
+    ? `1. ${note.title}  [HIDDEN]`
+    : `1. ${note.title}`;
+
   const titleHeight = measureText(
     doc,
-    `1. ${note.title}`,
+    titleText,
     layout.pageWidth - 24,
     11,
     true,
@@ -441,7 +460,11 @@ const drawNoteCard = (doc, note, index) => {
 
   doc.y = cardY + 10;
 
-  writeFlow(doc, `${index + 1}. ${note.title}`, {
+  const titleText = note.isHidden
+    ? `${index + 1}. ${note.title}  [HIDDEN]`
+    : `${index + 1}. ${note.title}`;
+
+  writeFlow(doc, titleText, {
     x: layout.left + 12,
     width: layout.pageWidth - 24,
     size: 11,
@@ -477,7 +500,8 @@ const drawFolderBanner = (
   doc,
   title,
   credCount,
-  noteCount
+  noteCount,
+  isHidden = false
 ) => {
   const layout = buildLayout(doc);
   const bannerHeight = 34;
@@ -498,11 +522,13 @@ const drawFolderBanner = (
     )
     .fill(BRAND);
 
+  const bannerTitle = isHidden ? `${title} (Hidden Folder)` : title;
+
   doc
     .fillColor('#ffffff')
     .font('Helvetica-Bold')
     .fontSize(12)
-    .text(title, layout.left + 12, y + 9, {
+    .text(bannerTitle, layout.left + 12, y + 9, {
       width: layout.pageWidth - 150,
       lineBreak: false,
     });
@@ -600,10 +626,14 @@ const drawCoverPage = (
     )
     .fill(BRAND_LIGHT);
 
+
+  const gradient = doc.linearGradient(layout.left + 16, headerY + 16, layout.left + 300, headerY + 16);
+  gradient.stop(0, BRAND2.start).stop(0.5, BRAND2.middle).stop(1, BRAND2.end);
   doc
-    .fillColor(BRAND)
+    .fillColor(gradient)
+    // .fillColor(BRAND)
     .font('Helvetica-Bold')
-    .fontSize(22)
+    .fontSize(24)
     .text(
       'LockForge Vault Export',
       layout.left + 16,
@@ -754,9 +784,10 @@ const drawCoverPage = (
   });
 
   populatedSections.forEach((section, i) => {
+    const hiddenTag = section.isHidden ? ' (Hidden Folder)' : '';
     writeFlow(
       doc,
-      `${i + 1}. ${section.name} — ${section.credentials.length} credentials, ${section.notes.length} notes`,
+      `${i + 1}. ${section.name}${hiddenTag} — ${section.credentials.length} credentials, ${section.notes.length} notes`,
       {
         size: 9,
         color: MUTED,
@@ -865,7 +896,8 @@ const drawVaultSections = (
         doc,
         section.name,
         section.credentials.length,
-        section.notes.length
+        section.notes.length,
+        !!section.isHidden
       );
 
       if (section.credentials.length) {

@@ -3,6 +3,7 @@ import {
   getCredentials, getCredential, createCredential, updateCredential,
   deleteCredential, restoreCredential, permanentDeleteCredential,
   emptyTrash, toggleFavorite, toggleHideCredential, moveCredentialToFolder,
+  deleteAllCredentials, purgeAllVaultData,
 } from '../controllers/vaultController.js';
 import { protect } from '../middleware/auth.js';
 import { requireVaultUnlock } from '../middleware/vaultLock.js';
@@ -19,6 +20,8 @@ router.get('/trash', (req, res, next) => {
 }, getCredentials);
 
 router.delete('/trash/empty', emptyTrash);
+router.delete('/all', deleteAllCredentials);
+router.post('/purge-all', purgeAllVaultData);
 router.get('/', getCredentials);
 router.post('/', credentialValidation, validate, createCredential);
 router.get('/:id', getCredential);
