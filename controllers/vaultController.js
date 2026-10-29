@@ -9,6 +9,7 @@ import { requireVaultUnlock } from '../middleware/vaultLock.js';
 import { assertFolderOwnership, createDefaultFolders } from '../services/folderService.js';
 import { LIMITS } from '../config/limits.js';
 import { assertUnderLimit } from '../utils/limitGuard.js';
+import { auditUserVault } from '../services/securityAuditService.js';
 
 const decryptCredential = (cred, key) => {
   const data = decryptJSON(cred.encryptedData, key);
@@ -170,6 +171,7 @@ export const createCredential = asyncHandler(async (req, res) => {
   });
 
   await logActivity(req.user._id, 'credential_created', `Created credential: ${serviceName}`, req);
+  auditUserVault(req.user._id, req.vaultKey, false).catch(() => {});
   res.status(201).json({ success: true, data: decryptCredential(cred, req.vaultKey) });
 });
 
@@ -198,6 +200,7 @@ export const updateCredential = asyncHandler(async (req, res) => {
   cred.encryptedData = encryptJSON(updated, req.vaultKey);
   await cred.save();
   await logActivity(req.user._id, 'credential_updated', `Updated credential: ${cred.serviceName}`, req);
+  auditUserVault(req.user._id, req.vaultKey, false).catch(() => {});
   res.json({ success: true, data: decryptCredential(cred, req.vaultKey) });
 });
 
@@ -208,6 +211,7 @@ export const deleteCredential = asyncHandler(async (req, res) => {
   cred.deletedAt = new Date();
   await cred.save();
   await logActivity(req.user._id, 'credential_deleted', `Moved to trash: ${cred.serviceName}`, req);
+  auditUserVault(req.user._id, req.vaultKey, false).catch(() => {});
   res.json({ success: true, message: 'Credential moved to trash' });
 });
 
@@ -218,6 +222,7 @@ export const restoreCredential = asyncHandler(async (req, res) => {
   cred.deletedAt = undefined;
   await cred.save();
   await logActivity(req.user._id, 'credential_restored', `Restored: ${cred.serviceName}`, req);
+  auditUserVault(req.user._id, req.vaultKey, false).catch(() => {});
   res.json({ success: true, data: decryptCredential(cred, req.vaultKey) });
 });
 
@@ -225,6 +230,7 @@ export const permanentDeleteCredential = asyncHandler(async (req, res) => {
   const cred = await Credential.findOneAndDelete({ _id: req.params.id, userId: req.user._id, isDeleted: true });
   if (!cred) throw new AppError('Credential not found in trash', 404);
   await logActivity(req.user._id, 'credential_permanently_deleted', `Permanently deleted: ${cred.serviceName}`, req);
+  auditUserVault(req.user._id, req.vaultKey, false).catch(() => {});
   res.json({ success: true, message: 'Credential permanently deleted' });
 });
 
@@ -261,6 +267,7 @@ export const deleteAllCredentials = asyncHandler(async (req, res) => {
   if (permanent) {
     const result = await Credential.deleteMany({ userId: req.user._id });
     await logActivity(req.user._id, 'credential_deleted', `Permanently deleted all credentials (${result.deletedCount} items)`, req);
+    auditUserVault(req.user._id, req.vaultKey, false).catch(() => {});
     return res.json({ success: true, message: `Permanently deleted ${result.deletedCount} credentials` });
   }
 
@@ -270,6 +277,7 @@ export const deleteAllCredentials = asyncHandler(async (req, res) => {
   );
 
   await logActivity(req.user._id, 'credential_deleted', `Moved all credentials to trash (${result.modifiedCount} items)`, req);
+  auditUserVault(req.user._id, req.vaultKey, false).catch(() => {});
   res.json({ success: true, message: `Moved ${result.modifiedCount} credentials to trash` });
 });
 
@@ -295,6 +303,18 @@ export const purgeAllVaultData = asyncHandler(async (req, res) => {
   ]);
 
   await createDefaultFolders(user._id);
+
+  user.securityAudit = {
+    weakCount: 0,
+    reusedCount: 0,
+    oldCount: 0,
+    securityScore: 100,
+    weakServices: [],
+    reusedServices: [],
+    lastAuditedAt: new Date(),
+    lastAlertSentAt: user.securityAudit?.lastAlertSentAt,
+  };
+  await user.save();
 
   const total = credResult.deletedCount + noteResult.deletedCount + folderResult.deletedCount;
   await logActivity(user._id, 'vault_cleared', `Permanently purged all vault data (${total} items removed)`, req);
@@ -348,6 +368,8 @@ export const toggleHideCredential = asyncHandler(async (req, res) => {
     `${cred.isHidden ? 'Hidden' : 'Unhidden'} credential: ${cred.serviceName}`,
     req,
   );
+
+  auditUserVault(req.user._id, req.vaultKey, false).catch(() => {});
 
   res.json({
     success: true,

@@ -28,6 +28,16 @@ const userSchema = new mongoose.Schema(
       autoLockMinutes: { type: Number, default: 15 },
       defaultPasswordLength: { type: Number, default: 16 },
     },
+    securityAudit: {
+      weakCount: { type: Number, default: 0 },
+      reusedCount: { type: Number, default: 0 },
+      oldCount: { type: Number, default: 0 },
+      securityScore: { type: Number, default: 100 },
+      weakServices: [{ type: String }],
+      reusedServices: [{ type: String }],
+      lastAuditedAt: { type: Date },
+      lastAlertSentAt: { type: Date },
+    },
     vaultUnlockedUntil: Date,
   },
   { timestamps: true }

@@ -33,17 +33,24 @@ export const sendEmail = async ({ to, subject, html }) => {
   });
 };
 
-const formatDateTime = (date = new Date()) => {
+export const formatDateTime = (date = new Date()) => {
   const d = new Date(date);
-  if (Number.isNaN(d.getTime())) return new Date().toUTCString();
-  return (
-    d.toLocaleString('en-US', {
-      dateStyle: 'medium',
-      timeStyle: 'medium',
-      timeZone: 'UTC',
-    }) + ' (UTC)'
-  );
+  const targetDate = Number.isNaN(d.getTime()) ? new Date() : d;
+
+  const formatted = targetDate.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+
+  return `${formatted.replace(/\b(am|pm)\b/i, (m) => m.toUpperCase())} IST`;
 };
+
 
 const renderEmailWrapper = ({
   badge = 'Security Notification',
@@ -183,7 +190,7 @@ export const sendLoginNotificationEmail = async ({
     <div style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:24px;">
       <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="font-size:14px;">
         <tr>
-          <td style="padding:6px 0;color:#64748b;width:120px;font-weight:600;">Time (UTC)</td>
+          <td style="padding:6px 0;color:#64748b;width:120px;font-weight:600;">Time (IST)</td>
           <td style="padding:6px 0;color:#0f172a;font-weight:600;">${timeFormatted}</td>
         </tr>
         <tr>
@@ -436,6 +443,152 @@ export const sendPasswordResetEmail = async (email, token, userName = '') => {
   await sendEmail({
     to: email,
     subject: 'Reset your LockForge password',
+    html,
+  });
+};
+
+
+export const sendWeeklySecurityDigestEmail = async ({
+  email,
+  userName = '',
+  weakCount = 0,
+  reusedCount = 0,
+  securityScore = 100,
+  weakServices = [],
+  reusedServices = [],
+}) => {
+  const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+  const dashboardUrl = `${clientUrl}/security-dashboard`;
+  const nameGreeting = userName ? `Hello ${userName},` : 'Hello,';
+
+  // Badge & score styling
+  const scoreColor = securityScore >= 70 ? '#10b981' : securityScore >= 40 ? '#f59e0b' : '#ef4444';
+  const scoreLabel = securityScore >= 70 ? 'Good' : securityScore >= 40 ? 'Needs Attention' : 'Vulnerable';
+
+  // Format services preview lists
+  const weakListHtml = weakServices && weakServices.length > 0
+    ? `<div style="margin-top:10px;font-size:13px;color:#64748b;">
+        <strong style="color:#475569;">Affected services:</strong> ${weakServices.slice(0, 6).map((s) => `<span style="display:inline-block;background-color:#fee2e2;color:#991b1b;padding:3px 9px;border-radius:6px;margin:2px 3px;font-weight:600;font-size:12px;">${s}</span>`).join(' ')}
+        ${weakServices.length > 6 ? `<span style="color:#94a3b8;font-size:12px;font-weight:600;">+${weakServices.length - 6} more</span>` : ''}
+       </div>`
+    : '';
+
+  const reusedListHtml = reusedServices && reusedServices.length > 0
+    ? `<div style="margin-top:10px;font-size:13px;color:#64748b;">
+        <strong style="color:#475569;">Affected services:</strong> ${reusedServices.slice(0, 6).map((s) => `<span style="display:inline-block;background-color:#fef3c7;color:#92400e;padding:3px 9px;border-radius:6px;margin:2px 3px;font-weight:600;font-size:12px;">${s}</span>`).join(' ')}
+        ${reusedServices.length > 6 ? `<span style="color:#94a3b8;font-size:12px;font-weight:600;">+${reusedServices.length - 6} more</span>` : ''}
+       </div>`
+    : '';
+
+  const bodyHtml = `
+    <p style="margin:0 0 16px 0;font-size:15px;color:#1e293b;">${nameGreeting}</p>
+    <p style="margin:0 0 20px 0;line-height:1.6;color:#334155;font-size:14px;">
+      During your automated weekly vault security audit, our system identified security vulnerabilities in your stored passwords that require your immediate attention. Reusing passwords or relying on weak passwords leaves your personal data susceptible to automated credential stuffing, dictionary attacks, and data breaches.
+    </p>
+
+    <!-- Score & Stats Banner -->
+    <div style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:24px;">
+      <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
+        <tr>
+          <td style="vertical-align:middle;width:48%;padding-right:12px;">
+            <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Vault Security Score</div>
+            <div style="margin-top:4px;">
+              <span style="font-size:32px;font-weight:800;color:${scoreColor};line-height:1;">${securityScore}%</span>
+              <span style="display:inline-block;margin-left:8px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;background-color:${scoreColor}18;color:${scoreColor};text-transform:uppercase;">
+                ${scoreLabel}
+              </span>
+            </div>
+          </td>
+          <td style="vertical-align:middle;width:52%;border-left:1px solid #e2e8f0;padding-left:18px;">
+            <div style="font-size:13px;color:#475569;line-height:1.5;">
+              Weekly security review conducted on <strong>${formatDateTime(new Date())}</strong>.
+            </div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Findings Section -->
+    <div style="margin-bottom:24px;">
+      ${weakCount > 0 ? `
+      <!-- Weak Passwords Box -->
+      <div style="background-color:#fff5f5;border:1px solid #fecaca;border-radius:12px;padding:16px 18px;margin-bottom:14px;">
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="vertical-align:top;width:32px;padding-top:2px;">
+              <div style="width:26px;height:26px;border-radius:50%;background-color:#fee2e2;color:#dc2626;text-align:center;line-height:26px;font-size:14px;font-weight:800;">!</div>
+            </td>
+            <td style="vertical-align:top;padding-left:12px;">
+              <div style="font-size:15px;font-weight:700;color:#991b1b;margin-bottom:4px;">
+                ${weakCount} Weak Password${weakCount > 1 ? 's' : ''} Detected
+              </div>
+              <div style="font-size:13px;color:#7f1d1d;line-height:1.5;">
+                These passwords do not meet recommended length and complexity standards and can be cracked quickly by modern automated cracking tools.
+              </div>
+              ${weakListHtml}
+            </td>
+          </tr>
+        </table>
+      </div>
+      ` : ''}
+
+      ${reusedCount > 0 ? `
+      <!-- Reused Passwords Box -->
+      <div style="background-color:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:16px 18px;margin-bottom:14px;">
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
+          <tr>
+            <td style="vertical-align:top;width:32px;padding-top:2px;">
+              <div style="width:26px;height:26px;border-radius:50%;background-color:#fef3c7;color:#d97706;text-align:center;line-height:26px;font-size:14px;font-weight:800;">↻</div>
+            </td>
+            <td style="vertical-align:top;padding-left:12px;">
+              <div style="font-size:15px;font-weight:700;color:#92400e;margin-bottom:4px;">
+                ${reusedCount} Reused Password${reusedCount > 1 ? 's' : ''} Found
+              </div>
+              <div style="font-size:13px;color:#78350f;line-height:1.5;">
+                Multiple services share the exact same password. If any one of these services suffers a security leak, attackers can breach all your other connected accounts.
+              </div>
+              ${reusedListHtml}
+            </td>
+          </tr>
+        </table>
+      </div>
+      ` : ''}
+    </div>
+
+    <!-- Recommendations -->
+    <div style="background-color:#f8fafc;border-left:4px solid #4f46e5;padding:14px 18px;border-radius:0 10px 10px 0;margin-bottom:28px;">
+      <div style="font-size:13px;font-weight:700;color:#1e293b;margin-bottom:6px;">Recommended Actions:</div>
+      <ul style="margin:0;padding-left:18px;font-size:13px;color:#475569;line-height:1.6;">
+        <li>Open your <strong>Security Dashboard</strong> to see all affected credentials.</li>
+        <li>Generate a strong, unique 16+ character password with symbols and numbers for each account.</li>
+        <li>Update the password on the respective service and save the new credentials in LockForge.</li>
+      </ul>
+    </div>
+
+    <!-- CTA Button -->
+    <div style="text-align:center;margin:32px 0 24px 0;">
+      <a href="${dashboardUrl}" style="display:inline-block;background:linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);color:#ffffff;font-size:15px;font-weight:700;padding:14px 34px;border-radius:12px;text-decoration:none;box-shadow:0 4px 14px rgba(79,70,229,0.3);letter-spacing:0.3px;">
+        🛡️ Open Security Dashboard
+      </a>
+    </div>
+
+    <p style="margin:20px 0 0 0;font-size:12px;color:#94a3b8;text-align:center;line-height:1.5;">
+      You receive this email every week because at least one weak or reused password was detected in your vault.<br>
+      Once all weak and reused passwords are changed, these weekly alerts will stop automatically.
+    </p>
+  `;
+
+  const html = renderEmailWrapper({
+    badge: 'Weekly Security Digest',
+    title: 'Action Required: Weak or Reused Passwords Detected',
+    subtitle: 'Weekly automated security review of your LockForge vault',
+    bodyHtml,
+    previewText: `LockForge Security: Action required — ${weakCount} weak and ${reusedCount} reused passwords found.`,
+  });
+
+  await sendEmail({
+    to: email,
+    subject: `Action Required: Weak or Reused Passwords Detected in Your LockForge Vault`,
     html,
   });
 };

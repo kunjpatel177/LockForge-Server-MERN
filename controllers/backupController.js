@@ -9,6 +9,7 @@ import { logActivity } from '../services/activityService.js';
 import { LIMITS } from '../config/limits.js';
 import { assertUnderLimit } from '../utils/limitGuard.js';
 import { buildVaultPdf } from '../utils/pdfExport.js';
+import { auditUserVault } from '../services/securityAuditService.js';
 
 const buildFolderLookup = (folders) => {
   const byId = new Map();
@@ -341,6 +342,7 @@ export const importBackup = asyncHandler(async (req, res) => {
     ? `Vault restored (all replaced: ${credentialsCreated} creds, ${notesCreated} notes, ${foldersCreated} folders)`
     : `Vault merged (${credentialsUpdated} creds updated, ${credentialsCreated} added, ${notesUpdated} notes updated, ${notesCreated} added)`;
   await logActivity(req.user._id, 'restore', actionMsg, req);
+  auditUserVault(req.user._id, key, false).catch(() => {});
 
   res.json({
     success: true,
