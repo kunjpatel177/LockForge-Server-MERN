@@ -23,9 +23,10 @@ const secureNoteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-secureNoteSchema.index({ userId: 1, isFavorite: 1 });
+secureNoteSchema.index({ userId: 1, isDeleted: 1, isHidden: 1 });
+secureNoteSchema.index({ userId: 1, isFavorite: 1, isDeleted: 1, isHidden: 1 });
+secureNoteSchema.index({ userId: 1, folderId: 1, isDeleted: 1, isHidden: 1 });
 secureNoteSchema.index({ userId: 1, isHidden: 1 });
 secureNoteSchema.index({ userId: 1, isDeleted: 1 });
-secureNoteSchema.index({ userId: 1, folderId: 1 });
 
 export default mongoose.model('SecureNote', secureNoteSchema);

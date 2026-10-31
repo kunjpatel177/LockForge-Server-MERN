@@ -1,6 +1,6 @@
 const IP_API_BASE = process.env.IP_API_BASE_URL || 'http://ip-api.com';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const REQUEST_TIMEOUT_MS = 4000;
+const REQUEST_TIMEOUT_MS = 1500;
 
 const locationCache = new Map();
 const pendingLookups = new Map();
@@ -99,12 +99,28 @@ export const resolveLocationFromIp = async (ip) => {
 export const enrichActivityLog = async (log) => {
   const doc = typeof log.toObject === 'function' ? log.toObject() : { ...log };
   if (!doc.location && doc.ipAddress) {
-    doc.location = await resolveLocationFromIp(doc.ipAddress);
+    const normalized = normalizeIp(doc.ipAddress);
+    if (!normalized || isLocalOrPrivateIp(normalized)) {
+      doc.location = 'Local network';
+    } else {
+      const cached = getCachedLocation(normalized);
+      if (cached) {
+        doc.location = cached;
+      } else {
+        doc.location = 'Unknown location';
+        resolveLocationFromIp(doc.ipAddress).catch(() => {});
+      }
+    }
   }
   return doc;
 };
 
 export const resolveSessionLocation = async (session) => {
-  if (session.location) return session.location;
-  return resolveLocationFromIp(session.ipAddress);
+  if (session.location && session.location !== 'Unknown location') return session.location;
+  const normalized = normalizeIp(session.ipAddress);
+  if (!normalized || isLocalOrPrivateIp(normalized)) return 'Local network';
+  const cached = getCachedLocation(normalized);
+  if (cached) return cached;
+  resolveLocationFromIp(session.ipAddress).catch(() => {});
+  return session.location || 'Unknown location';
 };

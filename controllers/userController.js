@@ -11,21 +11,40 @@ import {
 } from '../utils/crypto.js';
 import { logActivity } from '../services/activityService.js';
 import { sendEmailChangeVerification, sendEmailChangeAlert } from '../utils/email.js';
-import { clearVaultKey, setVaultKey, clearVaultKeysForUser } from '../middleware/vaultLock.js';
+import { getVaultKey, clearVaultKey, setVaultKey, clearVaultKeysForUser } from '../middleware/vaultLock.js';
 
 export const getProfile = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id).select(
-    '-password -masterVerifier -masterSalt -twoFactorSecret -twoFactorTempSecret -twoFactorOtpHash -twoFactorOtpExpiry -twoFactorOtpPurpose -verificationToken -verificationTokenExpiry -emailChangeToken -emailChangeTokenExpiry -resetPasswordToken -resetPasswordExpiry',
-  );
-  const [credentialCount, folderCount, noteCount, favoriteCount] = await Promise.all([
+  const [credentialCount, folderCount, noteCount, favoriteCount, key] = await Promise.all([
     Credential.countDocuments({ userId: req.user._id, isDeleted: false, isHidden: { $ne: true } }),
     Folder.countDocuments({ userId: req.user._id, isDeleted: { $ne: true }, isHidden: { $ne: true } }),
     SecureNote.countDocuments({ userId: req.user._id, isDeleted: { $ne: true }, isHidden: { $ne: true } }),
     Credential.countDocuments({ userId: req.user._id, isFavorite: true, isDeleted: false, isHidden: { $ne: true } }),
+    getVaultKey(req.sessionId),
   ]);
+
+  const rawUser = req.user.toObject ? req.user.toObject() : { ...req.user };
+  delete rawUser.password;
+  delete rawUser.masterVerifier;
+  delete rawUser.masterSalt;
+  delete rawUser.twoFactorSecret;
+  delete rawUser.twoFactorTempSecret;
+  delete rawUser.twoFactorOtpHash;
+  delete rawUser.twoFactorOtpExpiry;
+  delete rawUser.twoFactorOtpPurpose;
+  delete rawUser.verificationToken;
+  delete rawUser.verificationTokenExpiry;
+  delete rawUser.emailChangeToken;
+  delete rawUser.emailChangeTokenExpiry;
+  delete rawUser.resetPasswordToken;
+  delete rawUser.resetPasswordExpiry;
+
   res.json({
     success: true,
-    data: { user, stats: { credentialCount, folderCount, noteCount, favoriteCount } },
+    data: {
+      user: rawUser,
+      stats: { credentialCount, folderCount, noteCount, favoriteCount },
+      unlocked: !!key,
+    },
   });
 });
 

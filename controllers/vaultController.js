@@ -45,6 +45,7 @@ export const getCredentials = asyncHandler(async (req, res) => {
     sort = 'updatedAt',
     order = 'desc',
     trash,
+    limit,
   } = req.query;
 
   const filter = { userId: req.user._id };
@@ -82,7 +83,12 @@ export const getCredentials = asyncHandler(async (req, res) => {
     mongoSortObj.updatedAt = -1;
   }
 
-  const credentials = await Credential.find(filter).sort(mongoSortObj);
+  const limitNum = limit ? parseInt(limit, 10) : 0;
+  let queryBuilder = Credential.find(filter).sort(mongoSortObj);
+  if (!search && limitNum > 0) {
+    queryBuilder = queryBuilder.limit(limitNum);
+  }
+  const credentials = await queryBuilder;
   let decrypted = credentials.map((c) => decryptCredential(c, key));
 
   if (search && search.trim()) {

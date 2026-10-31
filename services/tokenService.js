@@ -26,7 +26,6 @@ export const generateTokens = (userId, sessionId) => {
 export const createSession = async (userId, req) => {
   const expiresAt = new Date(Date.now() + REFRESH_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
   const userAgent = req.headers['user-agent'] || 'Unknown';
-
   const ipAddress = getClientIp(req);
 
   const session = await Session.create({
@@ -35,9 +34,20 @@ export const createSession = async (userId, req) => {
     deviceInfo: parseDevice(userAgent),
     browser: parseBrowser(userAgent),
     ipAddress,
-    location: await resolveLocationFromIp(ipAddress),
+    location: 'Unknown location',
     expiresAt,
   });
+
+  // Resolve location asynchronously in background without delaying session creation / login
+  if (ipAddress && ipAddress !== 'Unknown') {
+    resolveLocationFromIp(ipAddress)
+      .then((loc) => {
+        if (loc && loc !== 'Unknown location') {
+          Session.findByIdAndUpdate(session._id, { location: loc }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }
 
   const { accessToken, refreshToken } = generateTokens(userId, session._id);
   session.refreshToken = refreshToken;

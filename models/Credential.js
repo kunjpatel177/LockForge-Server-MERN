@@ -25,10 +25,10 @@ const credentialSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-credentialSchema.index({ userId: 1, isDeleted: 1 });
-credentialSchema.index({ userId: 1, isHidden: 1 });
-credentialSchema.index({ userId: 1, folderId: 1 });
-credentialSchema.index({ userId: 1, isFavorite: 1 });
+credentialSchema.index({ userId: 1, isDeleted: 1, isHidden: 1 });
+credentialSchema.index({ userId: 1, isFavorite: 1, isDeleted: 1, isHidden: 1 });
+credentialSchema.index({ userId: 1, folderId: 1, isDeleted: 1, isHidden: 1 });
+credentialSchema.index({ userId: 1, updatedAt: -1 });
 credentialSchema.index({ serviceName: 'text' });
 
 export default mongoose.model('Credential', credentialSchema);

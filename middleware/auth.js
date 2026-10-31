@@ -46,10 +46,13 @@ export const protect = async (req, res, next) => {
   }
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-password -masterVerifier');
+    const [user, sessionId] = await Promise.all([
+      User.findById(decoded.id).select('-password -masterVerifier'),
+      validateSession(decoded.sessionId),
+    ]);
+
     if (!user) return next(new AppError('User not found', 401));
 
-    const sessionId = await validateSession(decoded.sessionId);
     if (sessionId === false) {
       return next(new AppError('Session expired or revoked', 401));
     }
@@ -67,11 +70,12 @@ export const optionalProtect = async (req, res, next) => {
   if (!token) return next();
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-password -masterVerifier');
-    if (user) {
-      const sessionId = await validateSession(decoded.sessionId);
-      if (sessionId === false) return next();
+    const [user, sessionId] = await Promise.all([
+      User.findById(decoded.id).select('-password -masterVerifier'),
+      validateSession(decoded.sessionId),
+    ]);
 
+    if (user && sessionId !== false) {
       req.user = user;
       req.sessionId = sessionId || normalizeSessionId(decoded.sessionId);
     }

@@ -61,7 +61,7 @@ export const auditUserVault = async (userId, vaultKey, sendAlertIfDue = true) =>
     ...new Set(reusedPasswords.flatMap((group) => group.credentials.map((c) => c.serviceName))),
   ].slice(0, 15);
 
-  const user = await User.findById(userId);
+  const user = await User.findById(userId).select('name email securityAudit');
   if (user) {
     const previousAlertSentAt = user.securityAudit?.lastAlertSentAt;
     const hasIssues = weakPasswords.length > 0 || reusedPasswords.length > 0;
@@ -69,7 +69,7 @@ export const auditUserVault = async (userId, vaultKey, sendAlertIfDue = true) =>
       !previousAlertSentAt ||
       now - new Date(previousAlertSentAt).getTime() >= SEVEN_DAYS_MS;
 
-    user.securityAudit = {
+    const securityAuditData = {
       weakCount: weakPasswords.length,
       reusedCount: reusedPasswords.length,
       oldCount: oldPasswords.length,
@@ -80,24 +80,30 @@ export const auditUserVault = async (userId, vaultKey, sendAlertIfDue = true) =>
       lastAlertSentAt: previousAlertSentAt,
     };
 
-    if (sendAlertIfDue && hasIssues && isWeeklyDue && user.email) {
-      try {
-        await sendWeeklySecurityDigestEmail({
-          email: user.email,
-          userName: user.name,
-          weakCount: weakPasswords.length,
-          reusedCount: reusedPasswords.length,
-          securityScore: score,
-          weakServices,
-          reusedServices,
-        });
-        user.securityAudit.lastAlertSentAt = new Date(now);
-      } catch (err) {
-        console.error(`[SecurityAudit] Failed to send weekly alert to ${user.email}:`, err.message);
-      }
-    }
+    // Update security audit state immediately
+    User.updateOne({ _id: userId }, { $set: { securityAudit: securityAuditData } }).catch(() => {});
 
-    await user.save();
+    // Dispatch weekly alert email asynchronously in the background if due
+    if (sendAlertIfDue && hasIssues && isWeeklyDue && user.email) {
+      sendWeeklySecurityDigestEmail({
+        email: user.email,
+        userName: user.name,
+        weakCount: weakPasswords.length,
+        reusedCount: reusedPasswords.length,
+        securityScore: score,
+        weakServices,
+        reusedServices,
+      })
+        .then(() => {
+          User.updateOne(
+            { _id: userId },
+            { $set: { 'securityAudit.lastAlertSentAt': new Date(now) } }
+          ).catch(() => {});
+        })
+        .catch((err) => {
+          console.error(`[SecurityAudit] Failed to send weekly alert to ${user.email}:`, err.message);
+        });
+    }
   }
 
   return {

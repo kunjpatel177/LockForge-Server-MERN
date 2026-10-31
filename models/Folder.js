@@ -14,6 +14,7 @@ const folderSchema = new mongoose.Schema(
 );
 
 folderSchema.index({ userId: 1, name: 1 }, { unique: true, partialFilterExpression: { isDeleted: false } });
+folderSchema.index({ userId: 1, isDeleted: 1, isHidden: 1 });
 folderSchema.index({ userId: 1, isHidden: 1 });
 folderSchema.index({ userId: 1, isDeleted: 1 });
 
