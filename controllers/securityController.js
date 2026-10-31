@@ -17,8 +17,9 @@ export const checkPasswordStrength = asyncHandler(async (req, res) => {
 });
 
 export const generatePassword = asyncHandler(async (req, res) => {
-  const { generatePasswordWithOptions } = await import('../utils/passwordStrength.js');
-  const password = generatePasswordWithOptions(req.body);
+  // const { generatePasswordWithOptions } = await import('../utils/passwordStrength.js');
+  const { generatePassword } = await import('../utils/passwordStrength.js');
+  const password = generatePassword(req.body);
   const strength = calculatePasswordStrength(password);
   res.json({ success: true, data: { password, strength } });
 });
